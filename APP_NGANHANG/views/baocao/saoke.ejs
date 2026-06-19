@@ -1,0 +1,78 @@
+<h1>📋 Sao kê giao dịch tài khoản</h1>
+
+<% if (error) { %><div class="alert alert-error">❌ <%= error %></div><% } %>
+
+<div class="form-card" style="margin-bottom:20px;">
+  <form method="POST" action="/baocao/saoke" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+    <div class="form-group" style="flex:1;min-width:140px;">
+      <label>Số tài khoản</label>
+      <select name="SOTK" required>
+        <option value="">-- Chọn --</option>
+        <% tkRows.forEach(tk => { %>
+          <option value="<%= tk.SOTK %>" <%= (query.SOTK===tk.SOTK)?'selected':'' %>><%= tk.SOTK %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div class="form-group" style="flex:1;min-width:130px;">
+      <label>Từ ngày</label>
+      <input type="date" name="TUNGAY" value="<%= query.TUNGAY||'' %>" required>
+    </div>
+    <div class="form-group" style="flex:1;min-width:130px;">
+      <label>Đến ngày</label>
+      <input type="date" name="DENNGAY" value="<%= query.DENNGAY||'' %>" required>
+    </div>
+    <div class="form-group">
+      <button type="submit" class="btn btn-primary">Xem sao kê</button>
+    </div>
+  </form>
+</div>
+
+<% if (rows) { %>
+<div style="background:white;padding:14px 18px;border-radius:6px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.1);">
+  <div style="display:flex;justify-content:space-between;">
+    <span>📌 <strong>Số dư đến ngày <%= query.TUNGAY %> -1:</strong></span>
+    <span class="money money-positive"><strong><%= Number(sodu_dau).toLocaleString('vi-VN') %> VNĐ</strong></span>
+  </div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th class="money">Số dư đầu</th>
+      <th>Ngày GD</th>
+      <th>Loại GD</th>
+      <th class="money">Số tiền</th>
+      <th class="money">Số dư sau</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% if (rows.length === 0) { %>
+      <tr><td colspan="6" style="text-align:center;color:#6c757d;">Không có giao dịch trong kỳ</td></tr>
+    <% } %>
+    <% rows.forEach((r, i) => { %>
+    <tr>
+      <td><%= i+1 %></td>
+      <td class="money"><%= Number(r.SoDuDau).toLocaleString('vi-VN') %></td>
+      <td><%= r.NGAYGD %></td>
+      <td>
+        <span class="badge <%= (r.TienVao > 0) ? 'badge-bn' : 'badge-td' %>">
+          <%= r.LoaiGD %>
+        </span>
+      </td>
+      <td class="money <%= (r.TienVao > 0) ? 'money-positive' : 'money-negative' %>">
+        <%= Number(r.SoTien).toLocaleString('vi-VN') %>
+      </td>
+      <td class="money"><strong><%= Number(r.SoDuSau).toLocaleString('vi-VN') %></strong></td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+
+<div style="background:white;padding:14px 18px;border-radius:6px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.1);">
+  <div style="display:flex;justify-content:space-between;">
+    <span>📌 <strong>Số dư tới ngày <%= query.DENNGAY %>:</strong></span>
+    <span class="money money-positive"><strong><%= Number(sodu_cuoi).toLocaleString('vi-VN') %> VNĐ</strong></span>
+  </div>
+</div>
+<% } %>

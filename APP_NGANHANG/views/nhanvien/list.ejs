@@ -1,0 +1,76 @@
+<h1>👔 Danh sách nhân viên</h1>
+
+<% if (success || (typeof query !== 'undefined' && query.success)) { %>
+  <div class="alert alert-success">✅ <%= success || query.success %></div>
+<% } %>
+<% if (error) { %>
+  <div class="alert alert-error">❌ <%= error %></div>
+<% } %>
+
+<% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %>
+  <a href="/nhanvien/them" class="btn btn-primary" style="margin-bottom:14px;">+ Thêm nhân viên</a>
+<% } %>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th><th>Mã NV</th><th>Họ tên</th><th>CMND</th>
+      <th>Chi nhánh</th><th>SĐT</th><th>Địa chỉ</th><th>Tình trạng</th>
+      <% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %><th>Thao tác</th><% } %>
+    </tr>
+  </thead>
+  <tbody>
+    <% if (rows.length === 0) { %>
+      <tr><td colspan="9" style="text-align:center;color:#6c757d;">Không có dữ liệu</td></tr>
+    <% } %>
+    <% rows.forEach((r, i) => { %>
+    <tr style="<%= r.TrangThaiXoa ? 'opacity: 0.5; background: #f8d7da;' : '' %>">
+      <td><%= i+1 %></td>
+      <td><code><%= r.MANV %></code></td>
+      <td><strong><%= r.HoTen %></strong></td>
+      <td><code><%= r.CMND %></code></td>
+      <td>
+        <span class="badge <%= r.MACN==='BENTHANH'?'badge-bn':'badge-td' %>">
+          <%= r.MACN %>
+        </span>
+      </td>
+      <td><%= r.SODT %></td>
+      <td><%= r.DIACHI || '—' %></td>
+      <td>
+        <% if (r.TrangThaiXoa) { %>
+          <span style="color:red; font-weight:bold;">Đã nghỉ / Xóa</span>
+        <% } else { %>
+          <span style="color:green; font-weight:bold;">Đang làm</span>
+        <% } %>
+      </td>
+      <% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %>
+      <td>
+        <% if (!r.TrangThaiXoa) { %>
+          <a href="/nhanvien/sua/<%= r.MANV.trim() %>" class="btn btn-warning btn-sm">Sửa</a>
+          
+          <form method="POST" action="/nhanvien/xoa" style="display:inline;"
+                onsubmit="return confirm('Xóa (Nghỉ việc) nhân viên <%= r.HoTen %>?')">
+            <input type="hidden" name="MANV" value="<%= r.MANV.trim() %>">
+            <button type="submit" class="btn btn-danger btn-sm">Xóa</button>
+          </form>
+
+          <form method="POST" action="/nhanvien/chuyen" style="display:inline; margin-left: 5px;"
+                onsubmit="return confirm('Chuyển nhân viên <%= r.HoTen %> sang chi nhánh <%= r.MACN==='BENTHANH'?'TANDINH':'BENTHANH' %>?')">
+            <input type="hidden" name="MANV" value="<%= r.MANV.trim() %>">
+            <input type="hidden" name="MACN_MOI" value="<%= r.MACN==='BENTHANH'?'TANDINH':'BENTHANH' %>">
+            <button type="submit" class="btn btn-secondary btn-sm" style="background:#17a2b8;">Chuyển CN</button>
+          </form>
+        <% } else { %>
+          <form method="POST" action="/nhanvien/phuchoi" style="display:inline;"
+                onsubmit="return confirm('Phục hồi (Đi làm lại) nhân viên <%= r.HoTen %>?')">
+            <input type="hidden" name="MANV" value="<%= r.MANV.trim() %>">
+            <button type="submit" class="btn btn-success btn-sm">Phục hồi</button>
+          </form>
+        <% } %>
+      </td>
+      <% } %>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<div style="color:#6c757d;font-size:12px;margin-top:8px;">Tổng: <%= rows.length %> nhân viên</div>

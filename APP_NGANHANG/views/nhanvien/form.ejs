@@ -1,0 +1,68 @@
+<h1><%= action === 'them' ? '➕ Thêm nhân viên mới' : '✏️ Sửa thông tin nhân viên' %></h1>
+
+<% if (error) { %>
+  <div class="alert alert-error">❌ <%= error %></div>
+<% } %>
+
+<div class="form-card">
+  <form method="POST" action="/nhanvien/<%= action %>">
+    <% if (action === 'sua' && nv) { %>
+      <input type="hidden" name="MANV" value="<%= nv.MANV.trim ? nv.MANV.trim() : nv.MANV %>">
+      <div class="form-group">
+        <label>Mã nhân viên (không thể sửa)</label>
+        <input type="text" value="<%= nv.MANV.trim ? nv.MANV.trim() : nv.MANV %>" disabled>
+      </div>
+    <% } else { %>
+      <div class="form-group">
+        <label>Mã nhân viên *</label>
+        <input type="text" name="MANV" maxlength="10" required
+               value="<%= nv ? nv.MANV : '' %>" placeholder="Ví dụ: NV01">
+      </div>
+    <% } %>
+
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;">
+      <div class="form-group">
+        <label>Họ *</label>
+        <input type="text" name="HO" required value="<%= nv ? nv.HO : '' %>">
+      </div>
+      <div class="form-group">
+        <label>Tên *</label>
+        <input type="text" name="TEN" required value="<%= nv ? nv.TEN : '' %>">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>CMND *</label>
+      <input type="text" name="CMND" maxlength="10" required
+             value="<%= nv ? nv.CMND : '' %>" placeholder="10 ký tự số">
+    </div>
+
+    <div class="form-group">
+      <label>Địa chỉ</label>
+      <input type="text" name="DIACHI" value="<%= nv ? nv.DIACHI || '' : '' %>">
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div class="form-group">
+        <label>Giới tính</label>
+        <select name="PHAI">
+          <option value="Nam" <%= (nv && nv.PHAI==='Nam') ? 'selected' : '' %>>Nam</option>
+          <option value="Nữ"  <%= (nv && nv.PHAI==='Nữ')  ? 'selected' : '' %>>Nữ</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Số điện thoại *</label>
+        <input type="text" name="SODT" required value="<%= nv ? nv.SODT : '' %>">
+      </div>
+    </div>
+
+    <input type="hidden" name="MACN" value="<%= macn %>">
+
+    <div style="margin-top:16px;display:flex;gap:10px;">
+      <button type="submit" class="btn btn-primary">
+        <%= action === 'them' ? 'Thêm mới' : 'Lưu thay đổi' %>
+      </button>
+      <a href="/nhanvien" class="btn btn-secondary">Hủy</a>
+    </div>
+  </form>
+</div>

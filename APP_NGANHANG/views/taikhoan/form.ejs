@@ -1,0 +1,36 @@
+<h1>➕ Mở tài khoản mới</h1>
+
+<% if (error) { %><div class="alert alert-error">❌ <%= error %></div><% } %>
+
+<div class="form-card">
+  <form method="POST" action="/taikhoan/mo">
+    <div class="form-group">
+      <label>Số tài khoản (tự động)</label>
+      <input type="text" name="SOTK" value="<%= sotk %>" readonly
+             style="background:#f8f9fa;font-weight:bold;">
+    </div>
+
+    <div class="form-group">
+      <label>Khách hàng *</label>
+      <select name="CMND" required>
+        <option value="">-- Chọn khách hàng --</option>
+        <% khRows.forEach(kh => { %>
+          <option value="<%= kh.CMND %>"><%= kh.HoTen %> (<%= kh.CMND %>)</option>
+        <% }) %>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Số dư ban đầu (VNĐ)</label>
+      <input type="number" name="SODU" value="0" min="0" step="100000">
+    </div>
+
+    <input type="hidden" name="MACN" value="<%= macn %>">
+
+    <div style="margin-top:16px;display:flex;gap:10px;">
+      <button type="submit" class="btn btn-success">Mở tài khoản</button>
+      <button type="reset" class="btn btn-secondary">Phục hồi</button>
+      <a href="/taikhoan" class="btn btn-secondary" style="background:#e0e0e0;color:#333;text-decoration:none;">Thoát</a>
+    </div>
+  </form>
+</div>

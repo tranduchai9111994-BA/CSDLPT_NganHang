@@ -1,0 +1,34 @@
+<h1>💳 Danh sách tài khoản</h1>
+
+<% if (success) { %><div class="alert alert-success">✅ <%= success %></div><% } %>
+<% if (error)   { %><div class="alert alert-error">❌ <%= error %></div><% } %>
+
+<% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %>
+  <a href="/taikhoan/mo" class="btn btn-primary" style="margin-bottom:14px;">+ Mở tài khoản</a>
+<% } %>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th><th>Số TK</th><th>CMND</th><th>Họ tên</th>
+      <th>Chi nhánh</th><th>Ngày mở</th><th class="money">Số dư (VNĐ)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% rows.forEach((r, i) => { %>
+    <tr>
+      <td><%= i+1 %></td>
+      <td><code><strong><%= r.SOTK %></strong></code></td>
+      <td><code><%= r.CMND %></code></td>
+      <td><%= r.HoTen || '—' %></td>
+      <td><span class="badge <%= r.MACN==='BENTHANH'?'badge-bn':'badge-td' %>"><%= r.MACN %></span></td>
+      <td><%= r.NGAYMOTK || '—' %></td>
+      <td class="money money-positive"><%= Number(r.SODU).toLocaleString('vi-VN') %></td>
+    </tr>
+    <% }) %>
+    <% if (rows.length === 0) { %>
+      <tr><td colspan="7" style="text-align:center;color:#6c757d;">Không có tài khoản</td></tr>
+    <% } %>
+  </tbody>
+</table>
+<div style="color:#6c757d;font-size:12px;margin-top:8px;">Tổng: <%= rows.length %> tài khoản</div>

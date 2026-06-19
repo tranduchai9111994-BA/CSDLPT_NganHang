@@ -1,0 +1,74 @@
+<h1>💰 Gửi / Rút tiền</h1>
+
+<% if (success) { %><div class="alert alert-success">✅ <%= success %></div><% } %>
+<% if (error)   { %><div class="alert alert-error">❌ <%= error %></div><% } %>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+
+  <!-- GỬI TIỀN -->
+  <div class="form-card">
+    <h3 style="color:#28a745;margin-bottom:14px;">⬆️ Gửi tiền</h3>
+    <form method="POST" action="/giaodich/guitien">
+      <div class="form-group">
+        <label>Số tài khoản</label>
+        <select name="SOTK" id="sotk-gui" onchange="loadSoDu(this,'sodu-gui')" required>
+          <option value="">-- Chọn tài khoản --</option>
+          <% tkRows.forEach(tk => { %>
+            <option value="<%= tk.SOTK %>"><%= tk.SOTK %></option>
+          <% }) %>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Số dư hiện tại</label>
+        <input type="text" id="sodu-gui" readonly style="background:#f8f9fa;color:#28a745;font-weight:bold;">
+      </div>
+      <div class="form-group">
+        <label>Số tiền gửi (tối thiểu 100,000 VNĐ)</label>
+        <input type="number" name="SOTIEN" min="100000" step="100000" required placeholder="100000">
+      </div>
+      <button type="submit" class="btn btn-success">Gửi tiền</button>
+    </form>
+  </div>
+
+  <!-- RÚT TIỀN -->
+  <div class="form-card">
+    <h3 style="color:#dc3545;margin-bottom:14px;">⬇️ Rút tiền</h3>
+    <form method="POST" action="/giaodich/ruttien">
+      <div class="form-group">
+        <label>Số tài khoản</label>
+        <select name="SOTK" id="sotk-rut" onchange="loadSoDu(this,'sodu-rut')" required>
+          <option value="">-- Chọn tài khoản --</option>
+          <% tkRows.forEach(tk => { %>
+            <option value="<%= tk.SOTK %>"><%= tk.SOTK %></option>
+          <% }) %>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Số dư hiện tại</label>
+        <input type="text" id="sodu-rut" readonly style="background:#f8f9fa;color:#dc3545;font-weight:bold;">
+      </div>
+      <div class="form-group">
+        <label>Số tiền rút (tối thiểu 100,000 VNĐ)</label>
+        <input type="number" name="SOTIEN" min="100000" step="100000" required placeholder="100000">
+      </div>
+      <button type="submit" class="btn btn-danger">Rút tiền</button>
+    </form>
+  </div>
+</div>
+
+<script>
+async function loadSoDu(selectEl, targetId) {
+  const sotk = selectEl.value;
+  if (!sotk) return;
+  try {
+    const res = await fetch('/giaodich/api/sodu/' + sotk);
+    const data = await res.json();
+    const el = document.getElementById(targetId);
+    if (data.SODU !== undefined) {
+      el.value = Number(data.SODU).toLocaleString('vi-VN') + ' VNĐ';
+    } else {
+      el.value = data.error || 'Lỗi';
+    }
+  } catch(e) { console.error(e); }
+}
+</script>

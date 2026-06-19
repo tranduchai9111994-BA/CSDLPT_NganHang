@@ -1,0 +1,81 @@
+<h1>↔️ Chuyển tiền</h1>
+
+<% if (success) { %><div class="alert alert-success">✅ <%= success %></div><% } %>
+<% if (error)   { %><div class="alert alert-error">❌ <%= error %></div><% } %>
+
+<div class="form-card" style="max-width:520px;">
+  <form method="POST" action="/giaodich/chuyentien" onsubmit="return xacNhan()">
+
+    <div class="form-group">
+      <label>Tài khoản chuyển</label>
+      <select name="SOTK_CHUYEN" id="sotk-chuyen"
+              onchange="loadSoDu(this,'sodu-chuyen')" required>
+        <option value="">-- Chọn TK chuyển --</option>
+        <% tkRows.forEach(tk => { %>
+          <option value="<%= tk.SOTK %>"><%= tk.SOTK %> (Số dư: <%= Number(tk.SODU).toLocaleString('vi-VN') %>)</option>
+        <% }) %>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Số dư TK chuyển</label>
+      <input type="text" id="sodu-chuyen" readonly style="background:#f8f9fa;font-weight:bold;color:#1a3c6e;">
+    </div>
+
+    <div class="form-group">
+      <label>Tài khoản nhận <small style="color:#6c757d;">(có thể ở chi nhánh khác)</small></label>
+      <input type="text" name="SOTK_NHAN" id="sotk-nhan"
+             placeholder="Nhập số tài khoản nhận" required maxlength="9"
+             onblur="kiemTraTKNhan()">
+      <div id="tk-nhan-info" style="font-size:12px;color:#6c757d;margin-top:4px;"></div>
+    </div>
+
+    <div class="form-group">
+      <label>Số tiền chuyển (VNĐ)</label>
+      <input type="number" name="SOTIEN" id="sotien"
+             min="1000" step="1000" required placeholder="VD: 500000">
+    </div>
+
+    <div style="background:#fff3cd;padding:10px;border-radius:4px;font-size:12px;margin-bottom:14px;">
+      ⚠️ Nếu chuyển sang chi nhánh khác, giao dịch sẽ cập nhật cả 2 server qua Linked Server.
+    </div>
+
+    <div style="display:flex;gap:10px;">
+      <button type="submit" class="btn btn-primary">Thực hiện chuyển tiền</button>
+      <a href="/" class="btn btn-secondary">Hủy</a>
+    </div>
+  </form>
+</div>
+
+<script>
+async function loadSoDu(selectEl, targetId) {
+  const sotk = selectEl.value;
+  if (!sotk) return;
+  const res  = await fetch('/giaodich/api/sodu/' + sotk);
+  const data = await res.json();
+  document.getElementById(targetId).value =
+    data.SODU !== undefined ? Number(data.SODU).toLocaleString('vi-VN') + ' VNĐ' : (data.error||'Lỗi');
+}
+
+async function kiemTraTKNhan() {
+  const sotk = document.getElementById('sotk-nhan').value.trim();
+  const info = document.getElementById('tk-nhan-info');
+  if (!sotk) { info.textContent = ''; return; }
+  const res  = await fetch('/giaodich/api/sodu/' + sotk);
+  const data = await res.json();
+  if (data.SODU !== undefined) {
+    info.textContent = '✅ Tài khoản hợp lệ. Số dư: ' + Number(data.SODU).toLocaleString('vi-VN') + ' VNĐ';
+    info.style.color = '#28a745';
+  } else {
+    info.textContent = '❌ ' + (data.error || 'Không tìm thấy tài khoản');
+    info.style.color = '#dc3545';
+  }
+}
+
+function xacNhan() {
+  const from   = document.getElementById('sotk-chuyen').value;
+  const to     = document.getElementById('sotk-nhan').value;
+  const sotien = document.getElementById('sotien').value;
+  return confirm(`Xác nhận chuyển ${Number(sotien).toLocaleString('vi-VN')} VNĐ\ntừ ${from} → ${to}?`);
+}
+</script>

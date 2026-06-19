@@ -1,0 +1,69 @@
+<h1>🏠 Trang chủ</h1>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-top:10px;">
+
+  <% if (user.NHOM === 'ChiNhanh' || user.NHOM === 'NganHang') { %>
+  <a href="/khachhang" style="text-decoration:none;">
+    <div style="background:white;padding:20px;border-radius:8px;border-left:4px solid #1a3c6e;box-shadow:0 1px 4px rgba(0,0,0,.1);">
+      <div style="font-size:28px;">👥</div>
+      <div style="font-weight:bold;color:#1a3c6e;margin-top:6px;">Khách hàng</div>
+      <div style="font-size:12px;color:#6c757d;">Thêm / Sửa / Xóa</div>
+    </div>
+  </a>
+
+  <a href="/taikhoan" style="text-decoration:none;">
+    <div style="background:white;padding:20px;border-radius:8px;border-left:4px solid #28a745;box-shadow:0 1px 4px rgba(0,0,0,.1);">
+      <div style="font-size:28px;">💳</div>
+      <div style="font-weight:bold;color:#28a745;margin-top:6px;">Tài khoản</div>
+      <div style="font-size:12px;color:#6c757d;">Mở tài khoản</div>
+    </div>
+  </a>
+  <% } %>
+
+  <% if (user.NHOM === 'ChiNhanh') { %>
+  <a href="/giaodich/goirut" style="text-decoration:none;">
+    <div style="background:white;padding:20px;border-radius:8px;border-left:4px solid #ffc107;box-shadow:0 1px 4px rgba(0,0,0,.1);">
+      <div style="font-size:28px;">💰</div>
+      <div style="font-weight:bold;color:#856404;margin-top:6px;">Gửi / Rút tiền</div>
+      <div style="font-size:12px;color:#6c757d;">Giao dịch tại quầy</div>
+    </div>
+  </a>
+
+  <a href="/giaodich/chuyentien" style="text-decoration:none;">
+    <div style="background:white;padding:20px;border-radius:8px;border-left:4px solid #dc3545;box-shadow:0 1px 4px rgba(0,0,0,.1);">
+      <div style="font-size:28px;">↔️</div>
+      <div style="font-weight:bold;color:#dc3545;margin-top:6px;">Chuyển tiền</div>
+      <div style="font-size:12px;color:#6c757d;">Nội bộ & liên chi nhánh</div>
+    </div>
+  </a>
+  <% } %>
+
+  <a href="/baocao/saoke" style="text-decoration:none;">
+    <div style="background:white;padding:20px;border-radius:8px;border-left:4px solid #6f42c1;box-shadow:0 1px 4px rgba(0,0,0,.1);">
+      <div style="font-size:28px;">📋</div>
+      <div style="font-weight:bold;color:#6f42c1;margin-top:6px;">Sao kê</div>
+      <div style="font-size:12px;color:#6c757d;">Lịch sử giao dịch</div>
+    </div>
+  </a>
+
+  <% if (user.NHOM !== 'KhachHang') { %>
+  <a href="/baocao/lietke?loai=kh" style="text-decoration:none;">
+    <div style="background:white;padding:20px;border-radius:8px;border-left:4px solid #17a2b8;box-shadow:0 1px 4px rgba(0,0,0,.1);">
+      <div style="font-size:28px;">📊</div>
+      <div style="font-weight:bold;color:#117a8b;margin-top:6px;">Báo cáo</div>
+      <div style="font-size:12px;color:#6c757d;">Liệt kê KH / TK</div>
+    </div>
+  </a>
+  <% } %>
+</div>
+
+<div style="margin-top:24px;background:white;padding:16px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.1);">
+  <h3 style="color:#1a3c6e;margin-bottom:10px;">ℹ️ Thông tin đăng nhập hiện tại</h3>
+  <table style="width:auto;box-shadow:none;">
+    <tr><td style="width:140px;color:#6c757d;">Nhân viên / KH:</td><td><strong><%= user.HOTEN %></strong></td></tr>
+    <tr><td style="color:#6c757d;">Nhóm quyền:</td>
+        <td><span class="badge <%= user.NHOM==='NganHang'?'badge-tc':(user.NHOM==='ChiNhanh'?'badge-bn':'badge-td') %>"><%= user.NHOM %></span></td></tr>
+    <tr><td style="color:#6c757d;">Chi nhánh:</td><td><%= user.MACN || 'Toàn hệ thống' %></td></tr>
+    <tr><td style="color:#6c757d;">Server:</td><td><%= user.SERVER %></td></tr>
+  </table>
+</div>

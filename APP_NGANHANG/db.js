@@ -1,5 +1,6 @@
 // db.js
 const sql = require('mssql');
+const { execFile } = require('child_process');
 
 // Cấu hình mặc định - kết nối NGANHANG1 (BENTHANH)
 const configs = {
@@ -118,6 +119,43 @@ async function execSP(req, serverKey, spName, params = {}) {
   return await request.execute(spName);
 }
 
+// Map serverKey → tên SQL Server instance
+const serverAddresses = {
+  BENTHANH: 'ES-HAITD16\\SQL1',
+  TANDINH:  'ES-HAITD16\\SQL2',
+  TRACUU:   'ES-HAITD16\\SQL3',
+};
+
+// Dùng sqlcmd (native SQL Server CLI) cho SP có MSDTC distributed transaction.
+// tedious driver không hỗ trợ distributed tran, sqlcmd dùng native client nên OK.
+async function execSPAdmin(serverKey, spName, params = {}) {
+  const serverAddr = serverAddresses[serverKey];
+  if (!serverAddr) throw new Error(`Không tìm thấy server: ${serverKey}`);
+
+  // Build câu EXEC với tham số
+  const paramStr = Object.entries(params)
+    .map(([k, v]) => `@${k}=N'${String(v).replace(/'/g, "''")}'`)
+    .join(', ');
+  const query = `EXEC ${spName} ${paramStr}`;
+
+  return new Promise((resolve, reject) => {
+    execFile('sqlcmd', [
+      '-S', serverAddr,
+      '-d', 'NGANHANG',
+      '-U', 'HTKN',
+      '-P', '123',
+      '-Q', query,
+      '-b'   // exit với error code nếu SQL lỗi
+    ], (error, stdout, stderr) => {
+      if (error) {
+        const msg = stderr || stdout || error.message;
+        return reject(new Error(msg.trim()));
+      }
+      resolve(stdout);
+    });
+  });
+}
+
 async function querySP(req, serverKey, spName, params = {}) {
   const result = await execSP(req, serverKey, spName, params);
   return result.recordset || [];
@@ -133,4 +171,4 @@ async function querySQL(req, serverKey, sqlStr, params = {}) {
   return result.recordset || [];
 }
 
-module.exports = { getPool, getAdminPool, execSP, querySP, querySQL, sql, configs };
+module.exports = { getPool, getAdminPool, execSP, execSPAdmin, querySP, querySQL, sql, configs };

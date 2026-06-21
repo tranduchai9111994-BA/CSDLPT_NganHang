@@ -28,6 +28,13 @@ Tính năng tạo và cấp phát Login (Form "Tạo Tài Khoản") đòi hỏi 
 - Hệ thống sử dụng một **Admin Pool** (kết nối ngầm bằng tài khoản SA hoặc tài khoản có quyền `securityadmin`) chỉ riêng cho chức năng cấp phát tài khoản và đặt lại mật khẩu. **Mọi chức năng nghiệp vụ khác** vẫn tuân thủ 100% bằng Pool của chính người dùng (SQL Authentication).
 - **Lưu mật khẩu phụ trợ (`QuanTriLogin`)**: SQL Server lưu mật khẩu dưới dạng Hash 1 chiều, không thể đọc lại. Để phục vụ mục đích kiểm thử và quản lý đồ án (ví dụ như quên mật khẩu test), hệ thống chủ động lưu thêm một bản sao mật khẩu dạng plain-text tại bảng độc lập `QuanTriLogin`. Bảng này bị khóa bằng lệnh `DENY SELECT` đối với `ChiNhanh` và `KhachHang`, chỉ `NganHang` (Admin) mới có quyền truy cập thông qua một API được kiểm duyệt chặt chẽ bởi middleware Backend.
 
+### Phân quyền cấp Database (GRANT/DENY) trên các Stored Procedures Quản Trị:
+Để đảm bảo an toàn tuyệt đối, bên cạnh việc kiểm tra Middleware ở Node.js, CSDL cũng khóa cứng quyền chạy các SP bằng lệnh `GRANT/DENY`:
+- **`sp_Login_App`**: `GRANT EXECUTE` cho cả `NganHang`, `ChiNhanh`, `KhachHang`.
+- **`SP_TaoTaiKhoan`**: `GRANT` cho `NganHang`, `ChiNhanh` (Chỉ NV mới được tạo TK). `DENY` cho `KhachHang`.
+- **`SP_DanhSachTrangThaiLogin`** & **`SP_XoaLoiDongBo`**: `GRANT` cho `NganHang`, `ChiNhanh`. `DENY` cho `KhachHang`.
+- **`SP_ResetMatKhau`**: CHỈ `GRANT` cho `NganHang` (Ban Giám Đốc). `DENY` cho `ChiNhanh` và `KhachHang` để tránh nhân viên lạm quyền đổi pass của người khác.
+
 ## 4. Mức Giao Diện (UI - View)
 Trong các file `.ejs`, sử dụng thẻ `if` để ẩn/hiện menu dựa trên nhóm quyền, nhằm mang lại trải nghiệm người dùng tốt (không thấy các chức năng không được phép sử dụng):
 ```ejs

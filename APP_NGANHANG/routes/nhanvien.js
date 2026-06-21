@@ -1,7 +1,7 @@
 // routes/nhanvien.js
 const express = require('express');
 const router = express.Router();
-const { querySQL, execSP } = require('../db');
+const { querySQL, execSP, execSPAdmin } = require('../db');
 
 function getServer(req) {
   return req.session.user.SERVER || 'BENTHANH';
@@ -39,23 +39,49 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Sinh mã NV tự động theo prefix chi nhánh: BT001, TD001, ...
+async function sinhMANV(req, server, macn) {
+  const prefix = macn === 'BENTHANH' ? 'BT' : 'TD';
+  const rows = await querySQL(req, server, `
+    SELECT TOP 1 RTRIM(MANV) AS MANV FROM NhanVien
+    WHERE RTRIM(MANV) LIKE @prefix + '%'
+    ORDER BY MANV DESC
+  `, { prefix });
+  if (rows.length === 0) return prefix + '001';
+  const last = rows[0].MANV;
+  const num = parseInt(last.replace(prefix, '')) + 1;
+  return prefix + String(num).padStart(3, '0');
+}
+
 // GET /nhanvien/them - Form thêm mới
-router.get('/them', (req, res) => {
+router.get('/them', async (req, res) => {
+  const server = getServer(req);
   const user = req.session.user;
-  res.render('nhanvien/form', {
-    nv: null, action: 'them', error: null,
-    macn: user.MACN
-  });
+  try {
+    const manv = await sinhMANV(req, server, user.MACN);
+    res.render('nhanvien/form', {
+      nv: null, action: 'them', error: null,
+      macn: user.MACN, manv
+    });
+  } catch (err) {
+    res.render('nhanvien/form', {
+      nv: null, action: 'them', error: err.message,
+      macn: user.MACN, manv: ''
+    });
+  }
 });
 
 // POST /nhanvien/them - Thực hiện thêm
 router.post('/them', async (req, res) => {
   const server = getServer(req);
   const user   = req.session.user;
-  const { MANV, HO, TEN, CMND, DIACHI, PHAI, SODT } = req.body;
+  let { MANV, HO, TEN, CMND, DIACHI, PHAI, SODT } = req.body;
   const MACN = user.MACN || req.body.MACN || 'BENTHANH';
 
   try {
+    if (!MANV) {
+      MANV = await sinhMANV(req, server, MACN);
+    }
     await querySQL(req, server, `
       INSERT INTO NhanVien (MANV, HO, TEN, CMND, DIACHI, PHAI, SODT, MACN, TrangThaiXoa)
       VALUES (@manv, @ho, @ten, @cmnd, @diachi, @phai, @sodt, @macn, 0)
@@ -64,7 +90,7 @@ router.post('/them', async (req, res) => {
   } catch (err) {
     res.render('nhanvien/form', {
       nv: req.body, action: 'them',
-      error: err.message, macn: MACN
+      error: err.message, macn: MACN, manv: MANV || ''
     });
   }
 });
@@ -123,15 +149,16 @@ router.post('/xoa', async (req, res) => {
 
 // POST /nhanvien/chuyen
 router.post('/chuyen', async (req, res) => {
-  const server = getServer(req);
   const { MANV, MACN_MOI } = req.body;
   try {
-    await execSP(req, server, 'sp_ChuyenNhanVien', {
-      MANV, MACN_MOI
-    });
+    // SP phải chạy trên server chứa NV hiện tại (chi nhánh cũ)
+    // Xác định chi nhánh hiện tại từ MACN_MOI (chuyển đi đâu → hiện tại ở phía ngược lại)
+    const serverHienTai = MACN_MOI === 'TANDINH' ? 'BENTHANH' : 'TANDINH';
+    await execSPAdmin(serverHienTai, 'SP_ChuyenNhanVien', { MANV, MACN_MOI });
     res.redirect('/nhanvien?success=' + encodeURIComponent('Đã chuyển chi nhánh thành công'));
   } catch (err) {
-    res.redirect('/nhanvien?error=' + encodeURIComponent(err.message));
+    console.error('[SP_ChuyenNhanVien] LỖI:', err);
+    res.redirect('/nhanvien?error=' + encodeURIComponent(err.message || JSON.stringify(err)));
   }
 });
 

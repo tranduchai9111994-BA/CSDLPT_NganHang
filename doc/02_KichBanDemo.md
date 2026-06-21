@@ -58,7 +58,7 @@
 **Thao tác:**
 1. Vào menu **Khách hàng** → bấm **Thêm**
 2. Nhập dữ liệu mẫu:
-   - CMND: `9999900001`
+   - CMND: `9999900001` (Hoặc nếu tạo Nhân Viên thì MANV sẽ được tự động sinh, ví dụ `BT001`, bạn không cần nhập tay).
    - Họ: `Nguyễn Văn`
    - Tên: `Demo`
    - Địa chỉ: `123 Lê Lợi, Q1`
@@ -92,8 +92,9 @@
 
 **Thao tác:**
 1. Vào menu **Giao dịch** → **Gửi/Rút tiền**
-2. Chọn TK vừa mở, Loại GD = **Gửi tiền**, Số tiền = `500000`
-3. Bấm thực hiện
+2. Chọn Tab **Gửi tiền**.
+3. Chọn TK vừa mở, Số tiền = `500000`
+4. Bấm thực hiện
 
 **Nói:** "Số tiền gửi tối thiểu 100.000đ theo đề bài. SP sp_GuiTien kiểm tra điều kiện này."
 
@@ -104,8 +105,9 @@
 ### Phần 5: Rút tiền — test lỗi (30 giây)
 
 **Thao tác:**
-1. Rút tiền `50000` (dưới 100.000) → **Phải báo lỗi**
-2. Rút tiền `200000` → **Thành công**
+1. Chuyển sang Tab **Rút tiền**.
+2. Rút tiền `50000` (dưới 100.000) → **Phải báo lỗi**
+3. Rút tiền `200000` → **Thành công**
 
 **Nói:** "SP kiểm tra 2 điều kiện: số tiền >= 100.000 và số dư đủ. Nếu vi phạm sẽ ROLLBACK."
 

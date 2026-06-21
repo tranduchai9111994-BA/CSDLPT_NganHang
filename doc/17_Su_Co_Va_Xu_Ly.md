@@ -138,3 +138,32 @@ Khi gặp `Login failed` hoặc bất kỳ lỗi liên quan `[LINKx]`, làm theo
 3. Kiểm tra cấu hình mapping (`sys.servers` + `sys.linked_logins`) xem đang dùng login nào, chế độ `uses_self_credential` hay mapping cụ thể.
 4. Cập nhật lại bằng `sp_addlinkedsrvlogin` với đúng mật khẩu hiện tại.
 5. Lặp lại cho từng Linked Server riêng biệt (LINK1, LINK2...) — không suy luận lỗi đã hết chỉ vì 1 cái đã chạy được.
+
+---
+
+## Sự cố 4: Lỗi `MSDTC on server is unavailable` hoặc lệnh bị treo khi chạy `SP_ChuyenNhanVien` qua Node.js
+
+**Triệu chứng:**
+Gọi thủ tục `SP_ChuyenNhanVien` bằng Node.js (thư viện `mssql` dùng `tedious`) bị lỗi, dù gọi trên SSMS thì chạy tốt. Thường báo lỗi không hỗ trợ Distributed Transaction.
+
+**Nguyên nhân gốc rễ:**
+Thư viện `tedious` (driver phổ biến nhất cho Node.js kết nối SQL Server) **không hỗ trợ** các giao dịch phân tán (Distributed Transactions) qua MSDTC (Microsoft Distributed Transaction Coordinator). Do `SP_ChuyenNhanVien` sử dụng lệnh `BEGIN DISTRIBUTED TRANSACTION`, nó đòi hỏi client driver cũng phải hỗ trợ cơ chế two-phase commit này.
+
+**Cách xử lý đã áp dụng:**
+Thay vì dùng thư viện `mssql` thông thường, hệ thống đã dùng một giải pháp Workaround: **Gọi công cụ dòng lệnh `sqlcmd` của Windows (Native Client)** bằng hàm `execFile` trong `child_process` của Node.js.
+`sqlcmd` dùng Native Client hoặc ODBC driver, hỗ trợ đầy đủ MSDTC.
+
+```javascript
+// db.js (Hàm execSPAdmin)
+execFile('sqlcmd', [
+  '-S', serverAddr,
+  '-d', 'NGANHANG',
+  '-U', 'HTKN',
+  '-P', '123',
+  '-Q', query,
+  '-b'   // exit với error code nếu SQL lỗi
+], ...)
+```
+
+**Bài học rút ra:**
+> Khi thiết kế hệ thống CSDL Phân Tán, nếu bắt buộc phải dùng `BEGIN DISTRIBUTED TRANSACTION` trong Stored Procedure, cần đảm bảo Driver của ngôn ngữ lập trình phía Backend (Node.js, Java, .NET) hỗ trợ MSDTC. Nếu không, phải dùng cách bọc tiến trình hoặc gọi Native driver.

@@ -24,15 +24,28 @@ router.get('/', async (req, res) => {
     let sql;
     let params = {};
     if (user.NHOM === 'NganHang') {
-      sql = `
-        SELECT RTRIM(tk.SOTK) AS SOTK, RTRIM(tk.CMND) AS CMND,
-               RTRIM(kh.HO)+' '+RTRIM(kh.TEN) AS HoTen,
-               tk.SODU, RTRIM(tk.MACN) AS MACN,
-               CONVERT(varchar,tk.NGAYMOTK,103) AS NGAYMOTK
-        FROM TaiKhoan tk
-        LEFT JOIN KhachHang kh ON RTRIM(tk.CMND)=RTRIM(kh.CMND)
-        ORDER BY tk.NGAYMOTK DESC
-      `;
+      // Lấy tất cả TaiKhoan từ 1 server (dữ liệu replicate đồng bộ)
+      const tkRows = await querySQL(req, 'BENTHANH', `
+        SELECT RTRIM(SOTK) AS SOTK, RTRIM(CMND) AS CMND,
+               SODU, RTRIM(MACN) AS MACN,
+               CONVERT(varchar,NGAYMOTK,103) AS NGAYMOTK
+        FROM TaiKhoan ORDER BY NGAYMOTK DESC
+      `);
+
+      // Tra cứu KhachHang theo đúng server của từng chi nhánh
+      const [khBT, khTD] = await Promise.all([
+        querySQL(req, 'BENTHANH', `SELECT RTRIM(CMND) AS CMND, RTRIM(HO)+' '+RTRIM(TEN) AS HoTen FROM KhachHang`),
+        querySQL(req, 'TANDINH',  `SELECT RTRIM(CMND) AS CMND, RTRIM(HO)+' '+RTRIM(TEN) AS HoTen FROM KhachHang`)
+      ]);
+      const khMap = {};
+      for (const kh of khBT) khMap[`BENTHANH_${kh.CMND}`] = kh.HoTen;
+      for (const kh of khTD) khMap[`TANDINH_${kh.CMND}`]  = kh.HoTen;
+
+      const rows = tkRows.map(tk => ({
+        ...tk,
+        HoTen: khMap[`${tk.MACN}_${tk.CMND}`] || null
+      }));
+      return res.render('taikhoan/list', { rows, error: req.query.error || null, success: req.query.success || null });
     } else if (user.NHOM === 'ChiNhanh') {
       sql = `
         SELECT RTRIM(tk.SOTK) AS SOTK, RTRIM(tk.CMND) AS CMND,

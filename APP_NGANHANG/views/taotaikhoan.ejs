@@ -17,15 +17,20 @@
         <div style="padding: 20px;">
             <form action="/quantri/taotaikhoan" method="POST">
                 <div style="margin-bottom: 15px;">
-                    <label style="font-weight: bold; display: block; margin-bottom: 5px;">Chọn Nhân Viên cần cấp tài khoản</label>
-                    <select style="width: 100%; padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px;" name="UserName" required>
-                        <option value="">-- Vui lòng chọn nhân viên --</option>
-                        <% if(typeof nhanviens !== 'undefined') { %>
-                            <% nhanviens.forEach(nv => { %>
-                                <option value="<%= nv.MANV %>"><%= nv.MANV %> - <%= nv.HO %> <%= nv.TEN %><%= nv.MACN ? ' [' + nv.MACN + ']' : '' %></option>
-                            <% }) %>
-                        <% } %>
-                    </select>
+                    <label style="font-weight: bold; display: block; margin-bottom: 5px;">Tìm nhân viên</label>
+                    <div style="display:flex; gap:6px; margin-bottom:8px;">
+                        <input type="text" id="searchNV" placeholder="Gõ mã NV hoặc họ tên..."
+                               style="flex:1; padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px;"
+                               onkeydown="if(event.key==='Enter'){event.preventDefault();searchList('NV')}">
+                        <button type="button" onclick="searchList('NV')" style="padding:8px 16px; background:#0d6efd; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:600;">Tìm</button>
+                    </div>
+                    <input type="hidden" name="UserName" id="selectedNV" required>
+                    <div id="resultNV" style="max-height:150px; overflow-y:auto; border:1px solid #dee2e6; border-radius:4px; display:none;">
+                        <table style="width:100%; font-size:13px; margin:0;">
+                            <tbody id="tbodyNV"></tbody>
+                        </table>
+                    </div>
+                    <div id="chosenNV" style="margin-top:6px; font-weight:600; color:#0d6efd;"></div>
                 </div>
                 <div style="margin-bottom: 15px;">
                     <label style="font-weight: bold; display: block; margin-bottom: 5px;">Tên Đăng Nhập (Login Name)</label>
@@ -56,15 +61,20 @@
         <div style="padding: 20px;">
             <form action="/quantri/taotaikhoan" method="POST">
                 <div style="margin-bottom: 15px;">
-                    <label style="font-weight: bold; display: block; margin-bottom: 5px;">Chọn Khách Hàng</label>
-                    <select style="width: 100%; padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px;" name="UserName" required onchange="document.getElementById('txtLoginKH').value = this.value">
-                        <option value="">-- Vui lòng chọn khách hàng --</option>
-                        <% if(typeof khachhangs !== 'undefined') { %>
-                            <% khachhangs.forEach(kh => { %>
-                                <option value="<%= kh.CMND %>"><%= kh.CMND %> - <%= kh.HO %> <%= kh.TEN %></option>
-                            <% }) %>
-                        <% } %>
-                    </select>
+                    <label style="font-weight: bold; display: block; margin-bottom: 5px;">Tìm khách hàng</label>
+                    <div style="display:flex; gap:6px; margin-bottom:8px;">
+                        <input type="text" id="searchKH" placeholder="Gõ CMND hoặc họ tên..."
+                               style="flex:1; padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px;"
+                               onkeydown="if(event.key==='Enter'){event.preventDefault();searchList('KH')}">
+                        <button type="button" onclick="searchList('KH')" style="padding:8px 16px; background:#198754; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:600;">Tìm</button>
+                    </div>
+                    <input type="hidden" name="UserName" id="selectedKH" required>
+                    <div id="resultKH" style="max-height:150px; overflow-y:auto; border:1px solid #dee2e6; border-radius:4px; display:none;">
+                        <table style="width:100%; font-size:13px; margin:0;">
+                            <tbody id="tbodyKH"></tbody>
+                        </table>
+                    </div>
+                    <div id="chosenKH" style="margin-top:6px; font-weight:600; color:#198754;"></div>
                 </div>
                 <div style="margin-bottom: 15px;">
                     <label style="font-weight: bold; display: block; margin-bottom: 5px;">Tên Đăng Nhập</label>
@@ -96,6 +106,30 @@
         <i class="fas fa-list"></i> Danh sách trạng thái Tài khoản
     </div>
     <div style="padding: 20px; overflow-x: auto;">
+        <div style="display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 15px; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="font-weight: 600; white-space: nowrap;">Loại:</label>
+                <select id="filterLoai" onchange="applyTableFilter()" style="padding: 6px 12px; border: 1px solid #ced4da; border-radius: 4px; min-width: 140px;">
+                    <option value="">Tất cả</option>
+                    <option value="NhanVien">Nhân viên</option>
+                    <option value="KhachHang">Khách hàng</option>
+                </select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="font-weight: 600; white-space: nowrap;">Trạng thái:</label>
+                <select id="filterTrangThai" onchange="applyTableFilter()" style="padding: 6px 12px; border: 1px solid #ced4da; border-radius: 4px; min-width: 140px;">
+                    <option value="">Tất cả</option>
+                    <option value="1">Đã cấp</option>
+                    <option value="0">Chưa cấp</option>
+                    <option value="2">Lỗi đồng bộ</option>
+                </select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="font-weight: 600; white-space: nowrap;">Tìm kiếm:</label>
+                <input type="text" id="filterSearch" oninput="applyTableFilter()" placeholder="Mã, họ tên, login..."
+                       style="padding: 6px 12px; border: 1px solid #ced4da; border-radius: 4px; min-width: 200px;">
+            </div>
+        </div>
         <table class="table table-bordered table-striped">
             <thead class="table-dark">
                 <tr>
@@ -121,6 +155,8 @@
 </div>
 
 <script>
+let allLoginData = [];
+
 async function loadLoginStatusTable() {
   const tbody = document.getElementById('login-status-tbody');
   tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:20px;">Đang tải dữ liệu...</td></tr>';
@@ -135,7 +171,21 @@ async function loadLoginStatusTable() {
       return;
     }
 
+    allLoginData = data;
+    renderLoginRows(data);
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:20px; color:#dc2626;">Lỗi tải dữ liệu: ${err.message}</td></tr>`;
+  }
+}
+
+function renderLoginRows(data) {
+    const tbody = document.getElementById('login-status-tbody');
     const isNganHang = '<%= user.NHOM %>' === 'NganHang';
+
+    if (!data || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:20px;">Không có dữ liệu phù hợp</td></tr>';
+        return;
+    }
 
     tbody.innerHTML = data.map(row => {
       let actionHtml = '';
@@ -205,12 +255,28 @@ async function loadLoginStatusTable() {
       </tr>
       `;
     }).join('');
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:20px; color:#dc2626;">Lỗi tải dữ liệu: ${err.message}</td></tr>`;
-  }
 }
 
 document.addEventListener('DOMContentLoaded', loadLoginStatusTable);
+
+function applyTableFilter() {
+    const loai = document.getElementById('filterLoai').value;
+    const trangThai = document.getElementById('filterTrangThai').value;
+    const search = document.getElementById('filterSearch').value.toLowerCase().normalize('NFC');
+
+    const filtered = allLoginData.filter(row => {
+        if (loai && row.LoaiTK !== loai) return false;
+        if (trangThai !== '' && String(row.DaCapTaiKhoan) !== trangThai) return false;
+        if (search) {
+            const haystack = [row.MaThamChieu, row.HoTen, row.LoginName, row.MACN, row.NhomQuyen]
+                .filter(Boolean).join(' ').toLowerCase().normalize('NFC');
+            if (!haystack.includes(search)) return false;
+        }
+        return true;
+    });
+
+    renderLoginRows(filtered);
+}
 
 function togglePassword(loginName) {
     const span = document.getElementById('pass_' + loginName);
@@ -283,29 +349,64 @@ function toggleFormPwd(inputId, iconId) {
     }
 }
 
+const allNV = [
+    <% if(typeof nhanviens !== 'undefined') { nhanviens.forEach(nv => { %>
+    { value: '<%= nv.MANV %>', text: '<%= nv.MANV %> - <%= nv.HO %> <%= nv.TEN %><%= nv.MACN ? " [" + nv.MACN + "]" : "" %>' },
+    <% }) } %>
+];
+const allKH = [
+    <% if(typeof khachhangs !== 'undefined') { khachhangs.forEach(kh => { %>
+    { value: '<%= kh.CMND %>', text: '<%= kh.CMND %> - <%= kh.HO %> <%= kh.TEN %>' },
+    <% }) } %>
+];
+
+function searchList(type) {
+    const kw = document.getElementById('search' + type).value.toLowerCase().normalize('NFC');
+    const list = type === 'NV' ? allNV : allKH;
+    const tbody = document.getElementById('tbody' + type);
+    const container = document.getElementById('result' + type);
+
+    const filtered = kw ? list.filter(r => r.text.toLowerCase().normalize('NFC').includes(kw)) : list;
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td style="padding:8px; text-align:center; color:#999;">Không tìm thấy</td></tr>';
+    } else {
+        tbody.innerHTML = filtered.map(r =>
+            `<tr style="cursor:pointer;" onmouseover="this.style.background='#e8f0fe'" onmouseout="this.style.background=''" onclick="pickItem('${type}','${r.value}','${r.text.replace(/'/g,"\\'")}')">
+                <td style="padding:6px 10px;">${r.text}</td>
+            </tr>`
+        ).join('');
+    }
+    container.style.display = 'block';
+}
+
+function pickItem(type, value, text) {
+    document.getElementById('selected' + type).value = value;
+    document.getElementById('chosen' + type).textContent = '✓ Đã chọn: ' + text;
+    document.getElementById('result' + type).style.display = 'none';
+    if (type === 'KH') {
+        const loginKH = document.getElementById('txtLoginKH');
+        if (loginKH) loginKH.value = value;
+    }
+}
+
 function prefillForm(loaiTK, maThamChieu) {
     if (loaiTK === 'NhanVien') {
-        const selectNV = document.querySelector('select[name="UserName"]');
-        if(selectNV) {
-            selectNV.value = maThamChieu;
-            // Clear các field nhập liệu để tránh submit nhầm giá trị cũ
-            const loginField = document.getElementById('txtLoginNV');
-            const pwdField = document.getElementById('pwdNV');
-            if (loginField) loginField.value = '';
-            if (pwdField) pwdField.value = '';
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-            if (loginField) loginField.focus();
-        }
+        const item = allNV.find(r => r.value === maThamChieu);
+        if (item) pickItem('NV', item.value, item.text);
+        const loginField = document.getElementById('txtLoginNV');
+        const pwdField = document.getElementById('pwdNV');
+        if (loginField) loginField.value = '';
+        if (pwdField) pwdField.value = '';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        if (loginField) loginField.focus();
     } else {
-        const selectKH = document.querySelectorAll('select[name="UserName"]')[1];
-        if(selectKH) {
-            selectKH.value = maThamChieu;
-            selectKH.dispatchEvent(new Event('change'));
-            const pwdField = document.getElementById('pwdKH');
-            if (pwdField) pwdField.value = '';
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-            if (pwdField) pwdField.focus();
-        }
+        const item = allKH.find(r => r.value === maThamChieu);
+        if (item) pickItem('KH', item.value, item.text);
+        const pwdField = document.getElementById('pwdKH');
+        if (pwdField) pwdField.value = '';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        if (pwdField) pwdField.focus();
     }
 }
 </script>

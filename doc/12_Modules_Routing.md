@@ -14,17 +14,19 @@ Tất cả các chức năng nghiệp vụ được tách ra thành từng file 
 
 ## 3. `nhanvien.js` (Quản lý Nhân Viên)
 - Hoạt động tương tự `khachhang.js`. Giao diện tuân thủ đầy đủ các nút chức năng: Thêm, Xóa, Phục hồi (Reset Form / Hủy trạng thái xóa), Ghi, Thoát.
-- Có thêm tính năng **Chuyển Chi Nhánh**: gọi SP `sp_ChuyenNhanVien(@MANV, @MACN_MOI)` để chuyển dữ liệu nhân viên từ phân mảnh này sang phân mảnh khác qua Linked Server.
+- **Tính năng Thêm Mới:** Tự động sinh Mã Nhân Viên (`MANV`) theo định dạng chi nhánh (VD: `BT001`, `TD001`) thay vì bắt người dùng nhập tay, giảm thiểu sai sót.
+- Có thêm tính năng **Chuyển Chi Nhánh**: gọi SP `sp_ChuyenNhanVien(@MANV, @MACN_MOI)` để chuyển dữ liệu nhân viên từ phân mảnh này sang phân mảnh khác qua Linked Server (sử dụng `sqlcmd` qua hàm `execSPAdmin` do hạn chế của driver Node.js với Distributed Transaction).
 - Có thêm tính năng **Phục hồi**: Cho phép khôi phục lại nhân viên đã xóa/nghỉ việc (`TrangThaiXoa = 0`).
 
 ## 4. `taikhoan.js` (Mở Tài Khoản)
 - Giao diện được thiết kế chuẩn Master-Detail (SubForm): Chọn khách hàng ở Master, Form mở tài khoản (Detail) hiển thị ngay bên dưới.
 - Giao diện tuân thủ đầy đủ các nút chức năng: Thêm, Xóa, Phục hồi (Reset Form / Hủy trạng thái xóa), Ghi, Thoát.
 - Tự động sinh `SOTK` bằng cách lấy số TK lớn nhất trong DB cộng thêm 1.
+- Danh sách tài khoản: Đối với nhóm `NganHang`, tự động tổng hợp danh sách tài khoản từ tất cả chi nhánh và map với danh sách Khách Hàng ở từng mảnh để hiển thị đầy đủ Họ Tên.
 - Gọi SP `sp_MoTaiKhoan`.
 
 ## 5. `giaodich.js` (Gửi / Rút / Chuyển tiền)
-- Cung cấp form giao dịch. 
+- Cung cấp form giao dịch. Giao diện Gửi/Rút tiền được nâng cấp thiết kế **Tabs đa năng** (Chuyển đổi giữa Gửi và Rút trên cùng 1 trang), tự động hiển thị số dư trực quan với màu sắc tương ứng.
 - Gửi các lệnh tương ứng vào DB thông qua các SP `sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien`. Trong đó `sp_ChuyenTien` có logic phân tán phức tạp nhất (kiểm tra tài khoản nhận có nằm ở chi nhánh khác không và xử lý Distributed Transaction).
 
 ## 6. `baocao.js` (Thống kê, Sao kê)
@@ -36,8 +38,8 @@ Tất cả các chức năng nghiệp vụ được tách ra thành từng file 
 
 ## 7. `quantri.js` (Tạo Tài Khoản / Phân Quyền)
 - **Chức năng Tạo Tài Khoản (Login):** Giao diện đã được nâng cấp thành thiết kế 2 cột song song (Grid Layout / Flexbox) chuyên nghiệp, hiển thị trực quan cả 2 bảng.
-- Dùng Dropdown để chọn trực tiếp Nhân viên hoặc Khách hàng. Trường "Nhóm quyền" (Role) được khóa cứng để hệ thống tự động gán chống sai sót phân quyền.
-- **Bảng Theo Dõi Trạng Thái Login:** Dưới form tạo tài khoản là bảng danh sách (Route `GET /quantri/login-management/list`). Bảng hiển thị thông tin những ai đã được cấp tài khoản, ai chưa.
+- Hỗ trợ công cụ tìm kiếm "search-as-you-type" để chọn trực tiếp Nhân viên hoặc Khách hàng khi có quá nhiều dữ liệu, thay cho Select dropdown thông thường. Trường "Nhóm quyền" (Role) được khóa cứng để hệ thống tự động gán chống sai sót phân quyền.
+- **Bảng Theo Dõi Trạng Thái Login:** Dưới form tạo tài khoản là bảng danh sách (Route `GET /quantri/login-management/list`). Bảng hiển thị thông tin những ai đã được cấp tài khoản, ai chưa. Có bộ lọc theo Loại, Trạng thái và tìm kiếm text.
 - **Xem / Đặt Lại Mật Khẩu (Chỉ dành cho NganHang):**
   - Route `GET /quantri/login-management/password/:loginName`: trả về mật khẩu plain-text từ bảng `QuanTriLogin`.
   - Route `POST /quantri/login-management/reset-password`: đặt lại mật khẩu về mặc định (`123456`).

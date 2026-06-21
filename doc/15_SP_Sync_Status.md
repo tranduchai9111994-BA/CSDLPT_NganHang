@@ -69,3 +69,9 @@ Server Tra Cứu đang ở trạng thái sơ sài nhất và chứa các SP rấ
    > ✅ **Cập nhật:** Đã hoàn tất bổ sung. Xem script `04_SP_TRACUU.sql`.
 
 5. **(MỚI) Chuẩn hoá Login cấp Server (`HTKN`):** Phát hiện thêm một lớp vấn đề độc lập với SP — Login `HTKN` (tài khoản dùng chung cho ứng dụng Node.js, xem `database_connection.md`) **không tự động tồn tại trên tất cả 4 server**, vì Login là đối tượng cấp Server (instance-level), không nằm trong phạm vi đồng bộ của Replication (vốn chỉ đồng bộ ở cấp Database). Phải tạo `HTKN` thủ công ở từng instance, đồng thời cấu hình lại `sp_addlinkedsrvlogin` đúng mật khẩu cho từng Linked Server (LINK1, LINK2 tại TRACUU). Xem chi tiết quy trình xử lý tại file `Su_Co_Va_Xu_Ly.md`.
+
+6. **(MỚI 21/06/2026) Triển khai SP Quản trị đồng loạt qua Node.js (`setup_db.js`):**
+   Do giới hạn của Replication chặn các lệnh DDL (`ALTER PROCEDURE`) tại các Subscriber (Bến Thành, Tân Định, Tra Cứu), hệ thống đã xây dựng một script tự động: `APP_NGANHANG/setup_db.js`.
+   - Script này sẽ chủ động kết nối trực tiếp đến **CẢ 4 SERVER** (`NGUON`, `BENTHANH`, `TANDINH`, `TRACUU`).
+   - Tự động thực thi `CREATE/ALTER` các SP quản trị: `sp_Login_App`, `SP_TaoTaiKhoan`, `SP_ResetMatKhau`, `SP_DanhSachTrangThaiLogin`, `SP_XoaLoiDongBo` cùng bảng phụ `QuanTriLogin`.
+   - **Kết quả:** Xoá bỏ hoàn toàn nỗi lo bất đồng nhất SP quản trị giữa các mảnh. Mọi server đều đang chạy chung một phiên bản Stored Procedure cấp quyền và xác thực mới nhất.

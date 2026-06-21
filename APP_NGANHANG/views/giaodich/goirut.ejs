@@ -4,157 +4,195 @@
 <% if (error)   { %><div class="alert alert-error">❌ <%= error %></div><% } %>
 
 <style>
-.money-input-wrap {
-  position: relative;
+.gr-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 0;
+  width: 420px;
 }
-.money-input-wrap .money-display {
-  width: 100%;
-  padding: 8px 52px 8px 12px;
-  border: 1px solid #ced4da;
-  border-radius: 4px;
+.gr-tab {
+  flex: 1;
+  padding: 12px 0;
+  text-align: center;
+  font-weight: 700;
   font-size: 15px;
-  font-family: 'Consolas', 'Courier New', monospace;
-  font-weight: 600;
+  cursor: pointer;
+  border: 2px solid #dee2e6;
+  background: #f8f9fa;
+  color: #6c757d;
+  transition: all .15s;
+  user-select: none;
+}
+.gr-tab:first-child { border-radius: 8px 0 0 0; border-right: none; }
+.gr-tab:last-child  { border-radius: 0 8px 0 0; border-left: none; }
+.gr-tab.active-gui  { background: #28a745; color: #fff; border-color: #28a745; }
+.gr-tab.active-rut  { background: #dc3545; color: #fff; border-color: #dc3545; }
+
+.gr-panel {
+  display: none;
+  width: 420px;
+  border: 2px solid #dee2e6;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  background: #fff;
+  padding: 24px;
+  box-sizing: border-box;
+}
+.gr-panel.show { display: block; }
+.gr-panel.panel-gui { border-color: #28a745; }
+.gr-panel.panel-rut { border-color: #dc3545; }
+
+.sodu-box {
+  background: #f0fff4;
+  border: 1.5px solid #b7ebc8;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sodu-box.rut { background: #fff5f5; border-color: #f5c6cb; }
+.sodu-label { font-size: 12px; color: #6c757d; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+.sodu-value { font-size: 22px; font-weight: 800; font-family: 'Consolas', monospace; color: #28a745; letter-spacing: .5px; }
+.sodu-box.rut .sodu-value { color: #dc3545; }
+.sodu-currency { font-size: 12px; color: #6c757d; align-self: flex-end; margin-bottom: 3px; }
+
+.money-wrap { position: relative; }
+.money-wrap input {
+  width: 100%;
+  padding: 10px 52px 10px 14px;
+  border: 1.5px solid #ced4da;
+  border-radius: 6px;
+  font-size: 17px;
+  font-family: 'Consolas', monospace;
+  font-weight: 700;
   color: #1a3a5c;
   box-sizing: border-box;
-  letter-spacing: 0.5px;
+  letter-spacing: .5px;
+  transition: border-color .15s;
 }
-.money-input-wrap .money-display:focus {
-  outline: none;
-  border-color: #0d6efd;
-  box-shadow: 0 0 0 2px rgba(13,110,253,0.15);
-}
-.money-input-wrap .currency-tag {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 11px;
-  font-weight: 700;
-  color: #888;
-  pointer-events: none;
-  letter-spacing: 0.5px;
-}
-.sodu-display {
+.money-wrap input:focus { outline: none; border-color: #0d6efd; box-shadow: 0 0 0 3px rgba(13,110,253,.12); }
+.money-wrap .cur { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 11px; font-weight: 700; color: #aaa; pointer-events: none; }
+
+.hint { font-size: 11px; color: #aaa; margin-top: 5px; }
+
+.btn-gui { width: 100%; padding: 13px; background: #28a745; color: #fff; border: none; border-radius: 7px; font-size: 16px; font-weight: 700; cursor: pointer; letter-spacing: .5px; margin-top: 8px; transition: background .15s; }
+.btn-gui:hover { background: #218838; }
+.btn-rut { width: 100%; padding: 13px; background: #dc3545; color: #fff; border: none; border-radius: 7px; font-size: 16px; font-weight: 700; cursor: pointer; letter-spacing: .5px; margin-top: 8px; transition: background .15s; }
+.btn-rut:hover { background: #c82333; }
+
+select.tk-select {
   width: 100%;
-  padding: 8px 52px 8px 12px;
-  border: 1px solid #dee2e6;
-  border-radius: 4px;
-  font-size: 15px;
-  font-family: 'Consolas', 'Courier New', monospace;
-  font-weight: 700;
-  background: #f8f9fa;
-  box-sizing: border-box;
-  letter-spacing: 0.5px;
+  padding: 10px 14px;
+  border: 1.5px solid #ced4da;
+  border-radius: 6px;
+  font-size: 14px;
+  background: #fff;
+  margin-bottom: 16px;
+  transition: border-color .15s;
 }
-.min-hint {
-  font-size: 11px;
-  color: #999;
-  margin-top: 4px;
-  display: block;
-}
+select.tk-select:focus { outline: none; border-color: #0d6efd; box-shadow: 0 0 0 3px rgba(13,110,253,.12); }
 </style>
 
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+<!-- TABS -->
+<div class="gr-tabs">
+  <div class="gr-tab active-gui" id="tab-gui" onclick="switchTab('gui')">⬆ Gửi tiền</div>
+  <div class="gr-tab" id="tab-rut" onclick="switchTab('rut')">⬇ Rút tiền</div>
+</div>
 
-  <!-- GỬI TIỀN -->
-  <div class="form-card">
-    <h3 style="color:#28a745;margin-bottom:14px;">⬆️ Gửi tiền</h3>
-    <form method="POST" action="/giaodich/guitien" onsubmit="return submitMoney('hidden-gui','display-gui')">
-      <div class="form-group">
-        <label>Số tài khoản</label>
-        <select name="SOTK" id="sotk-gui" onchange="loadSoDu(this,'sodu-gui','#28a745')" required>
-          <option value="">-- Chọn tài khoản --</option>
-          <% tkRows.forEach(tk => { %>
-            <option value="<%= tk.SOTK %>"><%= tk.SOTK %></option>
-          <% }) %>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Số dư hiện tại</label>
-        <div class="money-input-wrap">
-          <input type="text" id="sodu-gui" readonly class="sodu-display" style="color:#28a745;" value="—">
-          <span class="currency-tag">VNĐ</span>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Số tiền gửi</label>
-        <div class="money-input-wrap">
-          <input type="text" id="display-gui" class="money-display"
-                 placeholder="100.000" required
-                 oninput="formatMoneyInput(this,'hidden-gui')"
-                 onkeypress="return isDigit(event)">
-          <span class="currency-tag">VNĐ</span>
-        </div>
-        <span class="min-hint">Tối thiểu 100.000 VNĐ</span>
-        <input type="hidden" name="SOTIEN" id="hidden-gui">
-      </div>
-      <button type="submit" class="btn btn-success" style="width:100%;">Gửi tiền</button>
-    </form>
-  </div>
+<!-- PANEL GỬI -->
+<div class="gr-panel panel-gui show" id="panel-gui">
+  <form method="POST" action="/giaodich/guitien" onsubmit="return submitMoney('hidden-gui','display-gui')">
+    <label style="font-size:13px;font-weight:600;color:#555;display:block;margin-bottom:6px;">Số tài khoản</label>
+    <select name="SOTK" id="sotk-gui" class="tk-select" onchange="loadSoDu(this,'sodu-gui','gui')" required>
+      <option value="">-- Chọn tài khoản --</option>
+      <% tkRows.forEach(tk => { %>
+        <option value="<%= tk.SOTK %>"><%= tk.SOTK %></option>
+      <% }) %>
+    </select>
 
-  <!-- RÚT TIỀN -->
-  <div class="form-card">
-    <h3 style="color:#dc3545;margin-bottom:14px;">⬇️ Rút tiền</h3>
-    <form method="POST" action="/giaodich/ruttien" onsubmit="return submitMoney('hidden-rut','display-rut')">
-      <div class="form-group">
-        <label>Số tài khoản</label>
-        <select name="SOTK" id="sotk-rut" onchange="loadSoDu(this,'sodu-rut','#dc3545')" required>
-          <option value="">-- Chọn tài khoản --</option>
-          <% tkRows.forEach(tk => { %>
-            <option value="<%= tk.SOTK %>"><%= tk.SOTK %></option>
-          <% }) %>
-        </select>
+    <div class="sodu-box" id="sodu-box-gui">
+      <div>
+        <div class="sodu-label">Số dư hiện tại</div>
+        <div class="sodu-value" id="sodu-gui">—</div>
       </div>
-      <div class="form-group">
-        <label>Số dư hiện tại</label>
-        <div class="money-input-wrap">
-          <input type="text" id="sodu-rut" readonly class="sodu-display" style="color:#dc3545;" value="—">
-          <span class="currency-tag">VNĐ</span>
-        </div>
+      <div class="sodu-currency">VNĐ</div>
+    </div>
+
+    <label style="font-size:13px;font-weight:600;color:#555;display:block;margin-bottom:6px;">Số tiền gửi</label>
+    <div class="money-wrap" style="margin-bottom:4px;">
+      <input type="text" id="display-gui" placeholder="100.000" required
+             oninput="formatMoneyInput(this,'hidden-gui')"
+             onkeypress="return isDigit(event)">
+      <span class="cur">VNĐ</span>
+    </div>
+    <div class="hint">Tối thiểu 100.000 VNĐ</div>
+    <input type="hidden" name="SOTIEN" id="hidden-gui">
+    <button type="submit" class="btn-gui">Gửi tiền</button>
+  </form>
+</div>
+
+<!-- PANEL RÚT -->
+<div class="gr-panel panel-rut" id="panel-rut">
+  <form method="POST" action="/giaodich/ruttien" onsubmit="return submitMoney('hidden-rut','display-rut')">
+    <label style="font-size:13px;font-weight:600;color:#555;display:block;margin-bottom:6px;">Số tài khoản</label>
+    <select name="SOTK" id="sotk-rut" class="tk-select" onchange="loadSoDu(this,'sodu-rut','rut')" required>
+      <option value="">-- Chọn tài khoản --</option>
+      <% tkRows.forEach(tk => { %>
+        <option value="<%= tk.SOTK %>"><%= tk.SOTK %></option>
+      <% }) %>
+    </select>
+
+    <div class="sodu-box rut" id="sodu-box-rut">
+      <div>
+        <div class="sodu-label">Số dư hiện tại</div>
+        <div class="sodu-value" id="sodu-rut">—</div>
       </div>
-      <div class="form-group">
-        <label>Số tiền rút</label>
-        <div class="money-input-wrap">
-          <input type="text" id="display-rut" class="money-display"
-                 placeholder="100.000" required
-                 oninput="formatMoneyInput(this,'hidden-rut')"
-                 onkeypress="return isDigit(event)">
-          <span class="currency-tag">VNĐ</span>
-        </div>
-        <span class="min-hint">Tối thiểu 100.000 VNĐ</span>
-        <input type="hidden" name="SOTIEN" id="hidden-rut">
-      </div>
-      <button type="submit" class="btn btn-danger" style="width:100%;">Rút tiền</button>
-    </form>
-  </div>
+      <div class="sodu-currency">VNĐ</div>
+    </div>
+
+    <label style="font-size:13px;font-weight:600;color:#555;display:block;margin-bottom:6px;">Số tiền rút</label>
+    <div class="money-wrap" style="margin-bottom:4px;">
+      <input type="text" id="display-rut" placeholder="100.000" required
+             oninput="formatMoneyInput(this,'hidden-rut')"
+             onkeypress="return isDigit(event)">
+      <span class="cur">VNĐ</span>
+    </div>
+    <div class="hint">Tối thiểu 100.000 VNĐ</div>
+    <input type="hidden" name="SOTIEN" id="hidden-rut">
+    <button type="submit" class="btn-rut">Rút tiền</button>
+  </form>
 </div>
 
 <script>
-async function loadSoDu(selectEl, targetId, color) {
+function switchTab(mode) {
+  document.getElementById('panel-gui').classList.toggle('show', mode === 'gui');
+  document.getElementById('panel-rut').classList.toggle('show', mode === 'rut');
+  const tabGui = document.getElementById('tab-gui');
+  const tabRut = document.getElementById('tab-rut');
+  tabGui.className = 'gr-tab' + (mode === 'gui' ? ' active-gui' : '');
+  tabRut.className = 'gr-tab' + (mode === 'rut' ? ' active-rut' : '');
+}
+
+async function loadSoDu(selectEl, targetId, mode) {
   const sotk = selectEl.value;
   const el = document.getElementById(targetId);
-  if (!sotk) { el.value = '—'; return; }
+  if (!sotk) { el.textContent = '—'; return; }
   try {
     const res = await fetch('/giaodich/api/sodu/' + sotk);
     const data = await res.json();
-    if (data.SODU !== undefined) {
-      el.value = Number(data.SODU).toLocaleString('vi-VN');
-      el.style.color = color;
-    } else {
-      el.value = data.error || 'Lỗi';
-    }
-  } catch(e) { el.value = 'Lỗi'; }
+    el.textContent = data.SODU !== undefined
+      ? Number(data.SODU).toLocaleString('vi-VN')
+      : (data.error || 'Lỗi');
+  } catch(e) { el.textContent = 'Lỗi'; }
 }
 
-function isDigit(e) {
-  return e.key >= '0' && e.key <= '9';
-}
+function isDigit(e) { return e.key >= '0' && e.key <= '9'; }
 
 function formatMoneyInput(displayEl, hiddenId) {
   const raw = displayEl.value.replace(/\./g, '').replace(/[^0-9]/g, '');
   const num = parseInt(raw) || 0;
-  // Format với dấu chấm ngàn theo kiểu VN
   displayEl.value = num === 0 ? '' : num.toLocaleString('vi-VN');
   document.getElementById(hiddenId).value = num;
 }

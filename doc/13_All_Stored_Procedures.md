@@ -246,17 +246,27 @@ AS
 BEGIN
     SET NOCOUNT ON;
     DECLARE @NHOM nvarchar(50), @MANV nvarchar(50), @HOTEN nvarchar(100), @MACN nvarchar(10);
-    
+    DECLARE @DBUserName nvarchar(128);
+
+    -- Resolve DB user name từ login name (hỗ trợ login name khác user name)
+    SELECT @DBUserName = dp.name
+    FROM sys.database_principals dp
+    JOIN sys.server_principals sp ON dp.sid = sp.sid
+    WHERE sp.name = @LoginName;
+
+    -- Fallback: nếu login name = user name
+    IF @DBUserName IS NULL SET @DBUserName = @LoginName;
+
     SELECT @NHOM = rp.name
     FROM sys.database_role_members rm
     JOIN sys.database_principals dp ON rm.member_principal_id = dp.principal_id
     JOIN sys.database_principals rp ON rm.role_principal_id = rp.principal_id
-    WHERE dp.name = @LoginName
+    WHERE dp.name = @DBUserName
       AND rp.name IN ('NganHang','ChiNhanh','KhachHang');
 
     IF @NHOM IS NULL
     BEGIN
-        RAISERROR(N'Tài khoản SQL chưa được phân quyền Role (NganHang, ChiNhanh, KhachHang).', 16, 1);
+        RAISERROR(N'Tai khoan SQL chua duoc phan quyen Role (NganHang, ChiNhanh, KhachHang).', 16, 1);
         RETURN;
     END
 
@@ -264,12 +274,12 @@ BEGIN
     BEGIN
         SELECT @MANV = MANV, @HOTEN = RTRIM(HO) + ' ' + RTRIM(TEN), @MACN = MACN
         FROM NhanVien
-        WHERE RTRIM(MANV) = @LoginName AND TrangThaiXoa = 0;
-        
+        WHERE RTRIM(MANV) = @DBUserName AND TrangThaiXoa = 0;
+
         IF @MANV IS NULL AND @NHOM = 'NganHang'
         BEGIN
-            SET @MANV = @LoginName;
-            SET @HOTEN = N'Quản Trị Viên (Ban Giám Đốc)';
+            SET @MANV = @DBUserName;
+            SET @HOTEN = N'Quan Tri Vien (Ban Giam Doc)';
             SET @MACN = (SELECT TOP 1 MACN FROM ChiNhanh);
         END
     END
@@ -277,15 +287,12 @@ BEGIN
     BEGIN
         SELECT @MANV = CMND, @HOTEN = RTRIM(HO) + ' ' + RTRIM(TEN), @MACN = MACN
         FROM KhachHang
-        WHERE RTRIM(CMND) = @LoginName;
-    END
-    
-    IF @MANV IS NULL
-    BEGIN
-        RETURN;
+        WHERE RTRIM(CMND) = @DBUserName;
     END
 
-    SELECT 
+    IF @MANV IS NULL RETURN;
+
+    SELECT
         @LoginName AS USERNAME,
         @MANV AS MANV,
         @HOTEN AS HOTEN,
@@ -616,12 +623,17 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    SELECT 
+    -- TrangThaiTK: 0 = Chua cap, 1 = Da cap va login ton tai, 2 = Loi dong bo (trong QuanTriLogin nhung login bi xoa)
+    SELECT
         'NhanVien' AS LoaiTK,
         nv.MANV AS MaThamChieu,
         RTRIM(nv.HO) + ' ' + RTRIM(nv.TEN) AS HoTen,
         RTRIM(nv.MACN) AS MACN,
-        CASE WHEN ql.LoginName IS NOT NULL THEN 1 ELSE 0 END AS DaCapTaiKhoan,
+        CASE
+            WHEN ql.LoginName IS NULL THEN 0
+            WHEN EXISTS (SELECT 1 FROM sys.server_principals WHERE name = ql.LoginName) THEN 1
+            ELSE 2
+        END AS DaCapTaiKhoan,
         ql.LoginName,
         ql.NhomQuyen,
         ql.NgayTao,
@@ -633,12 +645,16 @@ BEGIN
 
     UNION ALL
 
-    SELECT 
+    SELECT
         'KhachHang' AS LoaiTK,
         kh.CMND AS MaThamChieu,
         RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen,
         RTRIM(kh.MACN) AS MACN,
-        CASE WHEN ql.LoginName IS NOT NULL THEN 1 ELSE 0 END AS DaCapTaiKhoan,
+        CASE
+            WHEN ql.LoginName IS NULL THEN 0
+            WHEN EXISTS (SELECT 1 FROM sys.server_principals WHERE name = ql.LoginName) THEN 1
+            ELSE 2
+        END AS DaCapTaiKhoan,
         ql.LoginName,
         ql.NhomQuyen,
         ql.NgayTao,
@@ -648,6 +664,31 @@ BEGIN
     WHERE (@MACN IS NULL OR RTRIM(kh.MACN) = RTRIM(@MACN))
 
     ORDER BY LoaiTK, DaCapTaiKhoan ASC, HoTen;
+END
+```
+
+## SP_XoaLoiDongBo
+```sql
+CREATE PROCEDURE [dbo].[SP_XoaLoiDongBo]
+    @LoginName  VARCHAR(50),
+    @UserName   VARCHAR(50) = NULL
+WITH EXECUTE AS OWNER
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Xóa record trong QuanTriLogin
+    DELETE FROM dbo.QuanTriLogin WHERE LoginName = @LoginName;
+
+    -- DROP DB user nếu còn tồn tại
+    DECLARE @TargetUser VARCHAR(50) = ISNULL(@UserName, @LoginName);
+    IF EXISTS (SELECT 1 FROM sys.database_principals WHERE name = @TargetUser)
+    BEGIN
+        DECLARE @Sql NVARCHAR(200) = N'DROP USER ' + QUOTENAME(@TargetUser);
+        EXEC sp_executesql @Sql;
+    END
+
+    RETURN 0;
 END
 ```
 

@@ -261,14 +261,14 @@ Thêm 1 bảng dưới 2 panel hiện có:
 
 ## 8. Việc cần làm theo thứ tự (checklist cho Antigravity)
 
-- [ ] Tạo bảng `QuanTriLogin` ở SQL1, SQL2, SQL3 (hoặc đúng các instance đang dùng) + GRANT/DENY như mục 2.1
-- [ ] `ALTER PROCEDURE SP_TaoTaiKhoan` tại server NGUON (Publisher) — thêm 2 tham số `@LOAITK`, `@MATHAMCHIEU` — đợi Replication đẩy xuống
-- [ ] Tạo mới `SP_ResetMatKhau` (tạo ở từng instance, hoặc tại NGUON nếu muốn đưa vào Replication sau)
-- [ ] Tạo mới `SP_DanhSachTrangThaiLogin` (tương tự)
-- [ ] Sửa code Node.js gọi `SP_TaoTaiKhoan` — truyền thêm `LOAITK` (`'NhanVien'`/`'KhachHang'`) và `MATHAMCHIEU` (MANV hoặc CMND đang chọn ở dropdown)
-- [ ] Thêm 3 route API mới (mục 6) + middleware `requireRole('NganHang')` đúng chỗ
-- [ ] Thêm bảng UI bên dưới form (mục 7), gồm toggle xem mật khẩu + nút reset
-- [ ] Test: login NganHang → thấy đủ cột mật khẩu + nút reset. Login ChiNhanh → không thấy 2 thứ đó (cả UI và thử gọi thẳng API bằng Postman để xác nhận backend cũng chặn, không chỉ ẩn ở giao diện)
+- [x] Tạo bảng `QuanTriLogin` ở SQL1, SQL2, SQL3 (hoặc đúng các instance đang dùng) + GRANT/DENY như mục 2.1
+- [x] `ALTER PROCEDURE SP_TaoTaiKhoan` tại server NGUON (Publisher) — thêm 2 tham số `@LOAITK`, `@MATHAMCHIEU` — đợi Replication đẩy xuống
+- [x] Tạo mới `SP_ResetMatKhau` (tạo ở từng instance, hoặc tại NGUON nếu muốn đưa vào Replication sau)
+- [x] Tạo mới `SP_DanhSachTrangThaiLogin` (tương tự)
+- [x] Sửa code Node.js gọi `SP_TaoTaiKhoan` — truyền thêm `LOAITK` (`'NhanVien'`/`'KhachHang'`) và `MATHAMCHIEU` (MANV hoặc CMND đang chọn ở dropdown)
+- [x] Thêm 3 route API mới (mục 6) + middleware `requireRole('NganHang')` đúng chỗ
+- [x] Thêm bảng UI bên dưới form (mục 7), gồm toggle xem mật khẩu + nút reset, thêm tính năng Tìm kiếm/Filter trực tiếp trên giao diện.
+- [x] Test: login NganHang → thấy đủ cột mật khẩu + nút reset. Login ChiNhanh → không thấy 2 thứ đó (cả UI và thử gọi thẳng API bằng Postman để xác nhận backend cũng chặn, không chỉ ẩn ở giao diện)
 
 ## 9. Điểm dễ bị hỏi vấn đáp (chuẩn bị trước)
 

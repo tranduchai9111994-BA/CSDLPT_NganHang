@@ -4,13 +4,7 @@
 
 <div class="form-card" style="margin-bottom:16px;">
   <form method="GET" action="/baocao/lietke" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
-    <div class="form-group">
-      <label>Loại báo cáo</label>
-      <select name="loai" onchange="this.form.submit()">
-        <option value="kh" <%= loai==='kh'?'selected':'' %>>Danh sách khách hàng</option>
-        <option value="tk" <%= loai==='tk'?'selected':'' %>>Tài khoản mở theo thời gian</option>
-      </select>
-    </div>
+    <input type="hidden" name="loai" value="<%= loai %>">
     <% if (user.NHOM === 'NganHang') { %>
     <div class="form-group">
       <label>Chi nhánh</label>

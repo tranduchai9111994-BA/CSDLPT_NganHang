@@ -14,9 +14,13 @@
       </div>
     <% } else { %>
       <div class="form-group">
-        <label>Mã nhân viên *</label>
-        <input type="text" name="MANV" maxlength="10" required
-               value="<%= nv ? nv.MANV : '' %>" placeholder="Ví dụ: NV01">
+        <label>Mã nhân viên (tự sinh)</label>
+        <input type="text" value="<%= manv %>" readonly
+               style="background:#e9ecef;font-weight:700;color:#1a3a5c;">
+        <input type="hidden" name="MANV" value="<%= manv %>">
+        <span style="font-size:11px;color:#888;margin-top:4px;display:block;">
+          Mã được tạo tự động theo chi nhánh (<%= macn === 'BENTHANH' ? 'BT' : 'TD' %>xxx)
+        </span>
       </div>
     <% } %>
 

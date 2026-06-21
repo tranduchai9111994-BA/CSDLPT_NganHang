@@ -33,6 +33,10 @@ Cơ sở dữ liệu được áp dụng kỹ thuật **Phân mảnh ngang (Hori
 - **Đọc (SELECT):** Đọc trực tiếp tại local (Subscriber) để tăng tốc độ truy vấn, không cần qua Linked Server.
 - **Ghi (INSERT/UPDATE/DELETE):** Chỉ thao tác trên local nếu dữ liệu đó thuộc về chi nhánh hiện tại. Nếu dữ liệu thuộc chi nhánh đối tác (ví dụ: cộng tiền vào tài khoản mở tại chi nhánh khác), **BẮT BUỘC** phải ghi qua Linked Server (`[LINK1]`) để trỏ về bản gốc (Publisher) hoặc site sở hữu dữ liệu đó. TUYỆT ĐỐI không ghi trực tiếp lên bản nhân bản tại Subscriber vì sẽ bị khoá ghi hoặc bị Replication ghi đè (override) ở chu kỳ đồng bộ kế tiếp.
 
+**[Cập nhật Login Management] Bảng Quản Trị Hệ Thống (`QuanTriLogin`):**
+- Bảng này là một ngoại lệ. Nó tồn tại giống nhau trên mọi mảnh (SQL1, SQL2, SQL3) nhưng **KHÔNG tham gia vào Replication**. 
+- Dữ liệu mật khẩu lưu trên bảng này là cục bộ của từng instance, không cần và không được đồng bộ chéo giữa các site để tuân thủ nguyên tắc thiết kế phân tán của đề bài (Login/User là tài nguyên Server-level, không tự đồng bộ).
+
 ## 3. Cấu hình Publication & Subscriptions
 
 Sau khi chuẩn bị xong, tiến hành cấu hình Merge Replication theo mô hình Publisher - Subscriber.

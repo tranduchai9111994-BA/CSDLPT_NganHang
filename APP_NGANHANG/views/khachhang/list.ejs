@@ -52,12 +52,128 @@
 </table>
 <div style="color:#6c757d;font-size:12px;margin-top:8px;">Tổng: <%= rows.length %> khách hàng</div>
 
+<style>
+.subform-panel {
+  background: #f8f9fb;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin: 4px 0;
+}
+.subform-panel h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a3a5c;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.subform-panel h4 .icon { font-size: 16px; }
+.sub-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.sub-table thead { background: #1a3a5c; }
+.sub-table thead th {
+  color: #fff;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.sub-table tbody td {
+  padding: 8px 12px;
+  font-size: 13px;
+  border-bottom: 1px solid #eee;
+}
+.sub-table tbody tr:last-child td { border-bottom: none; }
+.sub-table .money {
+  color: #198754;
+  font-weight: 700;
+  font-family: 'Consolas', monospace;
+}
+.sub-table .no-data {
+  text-align: center;
+  color: #999;
+  padding: 16px;
+  font-style: italic;
+}
+.open-account-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: #e8f5e9;
+  border: 1px solid #c8e6c9;
+  border-radius: 6px;
+}
+.open-account-bar label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2e7d32;
+  white-space: nowrap;
+  margin: 0;
+}
+.open-account-bar .money-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.open-account-bar .money-wrap input[type="text"] {
+  width: 150px;
+  padding: 6px 36px 6px 10px;
+  border: 1px solid #c8e6c9;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: 'Consolas', monospace;
+  font-weight: 600;
+  text-align: right;
+  color: #1a3a5c;
+}
+.open-account-bar .money-wrap input[type="text"]:focus {
+  outline: none;
+  border-color: #2e7d32;
+  box-shadow: 0 0 0 2px rgba(46,125,50,0.15);
+}
+.open-account-bar .money-wrap .vtag {
+  position: absolute;
+  right: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #999;
+  pointer-events: none;
+}
+.open-account-bar .unit {
+  font-size: 12px;
+  color: #666;
+  white-space: nowrap;
+}
+.open-account-bar button {
+  padding: 6px 16px;
+  background: #2e7d32;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.open-account-bar button:hover { background: #1b5e20; }
+</style>
+
 <script>
 async function toggleSubForm(cmnd, btn) {
   const tr = btn.closest('tr');
   let nextTr = tr.nextElementSibling;
 
-  // Nếu SubForm đã mở thì đóng lại
   if (nextTr && nextTr.classList.contains('subform-row')) {
     nextTr.remove();
     btn.textContent = 'Xem tài khoản';
@@ -70,70 +186,81 @@ async function toggleSubForm(cmnd, btn) {
     const res = await fetch('/khachhang/' + cmnd + '/taikhoan');
     const tkList = await res.json();
 
-    // Render danh sách tài khoản
     let tbodyHtml = '';
     if (tkList.length > 0) {
       tkList.forEach(tk => {
         tbodyHtml += `<tr>
-          <td>${tk.SOTK}</td>
-          <td class="text-success fw-bold">${Number(tk.SODU).toLocaleString('vi-VN')}</td>
-          <td>${tk.MACN}</td>
+          <td><code>${tk.SOTK}</code></td>
+          <td class="money">${Number(tk.SODU).toLocaleString('vi-VN')} ₫</td>
+          <td><span class="badge ${tk.MACN==='BENTHANH'?'badge-bn':'badge-td'}">${tk.MACN}</span></td>
           <td>${tk.NGAYMOTK}</td>
         </tr>`;
       });
     } else {
-      tbodyHtml = '<tr><td colspan="4" class="text-center text-muted">Khách hàng chưa có tài khoản nào.</td></tr>';
+      tbodyHtml = '<tr><td colspan="4" class="no-data">Khách hàng chưa có tài khoản nào.</td></tr>';
     }
 
-    // Render Form mở tài khoản mới (Inline Form)
+    const uid = 'sodu_' + cmnd;
     const formHtml = `
-      <div class="mt-3 p-3 bg-white border rounded d-flex align-items-center">
-        <strong class="me-3">Mở tài khoản mới:</strong>
-        <form action="/taikhoan/mo" method="POST" class="d-flex align-items-center gap-2 m-0">
-            <input type="hidden" name="CMND" value="${cmnd}"> 
-            <input type="hidden" name="MACN" value="<%= user.MACN %>">
-            <div class="input-group" style="width: auto;">
-                <span class="input-group-text">Số dư ban đầu</span>
-                <input type="number" class="form-control" name="SODU" value="0" min="0" style="max-width: 150px;">
-                <span class="input-group-text">VNĐ</span>
-            </div>
-            <button type="submit" class="btn btn-success ms-2">
-                <i class="fas fa-plus"></i> Mở ngay
-            </button>
-        </form>
-      </div>
+      <form action="/taikhoan/mo" method="POST" class="open-account-bar"
+            onsubmit="return validateSodu('${uid}')">
+        <input type="hidden" name="CMND" value="${cmnd}">
+        <input type="hidden" name="MACN" value="<%= user.MACN %>">
+        <input type="hidden" name="SODU" id="hidden_${uid}">
+        <label>Mở tài khoản mới:</label>
+        <div class="money-wrap">
+          <input type="text" id="${uid}" placeholder="0"
+                 oninput="fmtSodu(this,'hidden_${uid}')"
+                 onkeypress="return event.key>='0'&&event.key<='9'">
+          <span class="vtag">VNĐ</span>
+        </div>
+        <button type="submit">+ Mở ngay</button>
+      </form>
     `;
 
-    // Chèn dòng SubForm
     const subRow = document.createElement('tr');
     subRow.className = 'subform-row';
     subRow.innerHTML = `
-      <td colspan="7" class="bg-light p-3 border-bottom">
-        <div class="p-3 bg-light border rounded">
-            <h6 class="text-primary fw-bold mb-3">Tài khoản của ${cmnd}</h6>
-            <table class="table table-sm table-bordered bg-white mb-0">
-                <thead class="table-dark">
-                    <tr>
-                        <th>Số TK</th>
-                        <th>Số dư</th>
-                        <th>Chi nhánh</th>
-                        <th>Ngày mở</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${tbodyHtml}
-                </tbody>
-            </table>
-            ${formHtml}
+      <td colspan="7" style="padding:0; border:none;">
+        <div class="subform-panel">
+          <h4><span class="icon">💳</span> Tài khoản của ${cmnd}</h4>
+          <table class="sub-table">
+            <thead>
+              <tr>
+                <th>Số TK</th>
+                <th>Số dư</th>
+                <th>Chi nhánh</th>
+                <th>Ngày mở</th>
+              </tr>
+            </thead>
+            <tbody>${tbodyHtml}</tbody>
+          </table>
+          ${formHtml}
         </div>
       </td>
     `;
-    
+
     tr.after(subRow);
     btn.textContent = 'Đóng tài khoản';
   } catch (err) {
     alert('Lỗi tải dữ liệu: ' + err.message);
     btn.textContent = 'Xem tài khoản';
   }
+}
+
+function fmtSodu(el, hiddenId) {
+  const raw = el.value.replace(/\./g, '').replace(/[^0-9]/g, '');
+  const num = parseInt(raw) || 0;
+  el.value = num === 0 ? '' : num.toLocaleString('vi-VN');
+  document.getElementById(hiddenId).value = num;
+}
+
+function validateSodu(uid) {
+  const val = parseInt(document.getElementById('hidden_' + uid).value) || 0;
+  if (val < 0) { alert('Số dư không hợp lệ'); return false; }
+  if (!document.getElementById('hidden_' + uid).value) {
+    document.getElementById('hidden_' + uid).value = 0;
+  }
+  return true;
 }
 </script>

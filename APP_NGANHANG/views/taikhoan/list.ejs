@@ -12,6 +12,7 @@
     <tr>
       <th>#</th><th>Số TK</th><th>CMND</th><th>Họ tên</th>
       <th>Chi nhánh</th><th>Ngày mở</th><th class="money">Số dư (VNĐ)</th>
+      <% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %><th>Thao tác</th><% } %>
     </tr>
   </thead>
   <tbody>
@@ -24,10 +25,19 @@
       <td><span class="badge <%= r.MACN==='BENTHANH'?'badge-bn':'badge-td' %>"><%= r.MACN %></span></td>
       <td><%= r.NGAYMOTK || '—' %></td>
       <td class="money money-positive"><%= Number(r.SODU).toLocaleString('vi-VN') %></td>
+      <% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %>
+      <td>
+        <form method="POST" action="/taikhoan/dong" style="display:inline;"
+              onsubmit="return confirm('Đóng tài khoản <%= r.SOTK %>? Chỉ đóng được nếu số dư = 0 và chưa có giao dịch.')">
+          <input type="hidden" name="SOTK" value="<%= r.SOTK %>">
+          <button type="submit" class="btn btn-danger btn-sm">Đóng TK</button>
+        </form>
+      </td>
+      <% } %>
     </tr>
     <% }) %>
     <% if (rows.length === 0) { %>
-      <tr><td colspan="7" style="text-align:center;color:#6c757d;">Không có tài khoản</td></tr>
+      <tr><td colspan="8" style="text-align:center;color:#6c757d;">Không có tài khoản</td></tr>
     <% } %>
   </tbody>
 </table>

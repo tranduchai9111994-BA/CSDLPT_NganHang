@@ -13,7 +13,8 @@ Sau khi rà soát toàn bộ source code NodeJS (`routes/baocao.js`) và Databas
 - **Độ chính xác:**
   - Kết xuất chính xác format bảng 5 cột: Số dư đầu | Ngày | Loại giao dịch | Số tiền | Số dư sau.
   - Toàn bộ việc tính số dư đầu kỳ và số dư lũy kế từng dòng (Số dư sau) được xử lý 100% dưới SQL Server thông qua Window Functions, đáp ứng tuyệt đối yêu cầu tính toán dưới CSDL. Tầng Node.js chỉ nhận dữ liệu và in ra giao diện.
-  - Tự động khóa: Khách hàng chỉ được phép sao kê chính tài khoản của họ (bảo mật cấp cao).
+  - **Điều kiện lọc thông minh:** Hệ thống đã tự động gán `23:59:59` vào giá trị `DENNGAY` để đảm bảo báo cáo bao gồm toàn bộ các giao dịch diễn ra trong ngày kết thúc.
+  - Tự động khóa: Khách hàng chỉ được phép sao kê chính tài khoản của họ (hệ thống kiểm tra chủ sở hữu TK trước khi gọi SP), nhưng cho phép họ chọn giữa **nhiều tài khoản** của chính mình.
 
 ## 2. Liệt kê tài khoản mở trong 1 khoảng thời gian: ĐÃ HOÀN THÀNH (100%)
 - **Thực trạng code:** Nằm tại route `GET /baocao/lietke?loai=tk`.

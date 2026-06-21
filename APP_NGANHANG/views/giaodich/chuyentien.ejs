@@ -3,8 +3,45 @@
 <% if (success) { %><div class="alert alert-success">✅ <%= success %></div><% } %>
 <% if (error)   { %><div class="alert alert-error">❌ <%= error %></div><% } %>
 
+<style>
+.money-field { position: relative; }
+.money-field input[type="text"] {
+  width: 100%;
+  padding: 8px 42px 8px 12px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 15px;
+  font-family: 'Consolas', monospace;
+  font-weight: 600;
+  color: #1a3a5c;
+  box-sizing: border-box;
+}
+.money-field input[type="text"]:focus {
+  outline: none;
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 2px rgba(13,110,253,0.15);
+}
+.money-field .vtag {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 700;
+  color: #aaa;
+  pointer-events: none;
+}
+.sodu-readonly {
+  background: #f8f9fa;
+  font-weight: 700;
+  font-family: 'Consolas', monospace;
+  color: #1a3c6e;
+}
+</style>
+
 <div class="form-card" style="max-width:520px;">
-  <form method="POST" action="/giaodich/chuyentien" onsubmit="return xacNhan()">
+  <form method="POST" action="/giaodich/chuyentien"
+        onsubmit="return xacNhan()">
 
     <div class="form-group">
       <label>Tài khoản chuyển</label>
@@ -12,28 +49,39 @@
               onchange="loadSoDu(this,'sodu-chuyen')" required>
         <option value="">-- Chọn TK chuyển --</option>
         <% tkRows.forEach(tk => { %>
-          <option value="<%= tk.SOTK %>"><%= tk.SOTK %> (Số dư: <%= Number(tk.SODU).toLocaleString('vi-VN') %>)</option>
+          <option value="<%= tk.SOTK %>">
+            <%= tk.SOTK %> (Số dư: <%= Number(tk.SODU).toLocaleString('vi-VN') %>)
+          </option>
         <% }) %>
       </select>
     </div>
 
     <div class="form-group">
       <label>Số dư TK chuyển</label>
-      <input type="text" id="sodu-chuyen" readonly style="background:#f8f9fa;font-weight:bold;color:#1a3c6e;">
+      <div class="money-field">
+        <input type="text" id="sodu-chuyen" readonly class="sodu-readonly" value="—">
+        <span class="vtag">VNĐ</span>
+      </div>
     </div>
 
     <div class="form-group">
       <label>Tài khoản nhận <small style="color:#6c757d;">(có thể ở chi nhánh khác)</small></label>
       <input type="text" name="SOTK_NHAN" id="sotk-nhan"
              placeholder="Nhập số tài khoản nhận" required maxlength="9"
-             onblur="kiemTraTKNhan()">
-      <div id="tk-nhan-info" style="font-size:12px;color:#6c757d;margin-top:4px;"></div>
+             onblur="kiemTraTKNhan()" style="font-family:monospace;font-weight:600;">
+      <div id="tk-nhan-info" style="font-size:12px;margin-top:4px;"></div>
     </div>
 
     <div class="form-group">
-      <label>Số tiền chuyển (VNĐ)</label>
-      <input type="number" name="SOTIEN" id="sotien"
-             min="1000" step="1000" required placeholder="VD: 500000">
+      <label>Số tiền chuyển</label>
+      <div class="money-field">
+        <input type="text" id="display-sotien" placeholder="100.000"
+               oninput="fmtCT(this)"
+               onkeypress="return event.key>='0'&&event.key<='9'">
+        <span class="vtag">VNĐ</span>
+      </div>
+      <input type="hidden" name="SOTIEN" id="hidden-sotien">
+      <small style="color:#999;font-size:11px;">Tối thiểu 1.000 VNĐ</small>
     </div>
 
     <div style="background:#fff3cd;padding:10px;border-radius:4px;font-size:12px;margin-bottom:14px;">
@@ -50,11 +98,13 @@
 <script>
 async function loadSoDu(selectEl, targetId) {
   const sotk = selectEl.value;
-  if (!sotk) return;
+  const el = document.getElementById(targetId);
+  if (!sotk) { el.value = '—'; return; }
   const res  = await fetch('/giaodich/api/sodu/' + sotk);
   const data = await res.json();
-  document.getElementById(targetId).value =
-    data.SODU !== undefined ? Number(data.SODU).toLocaleString('vi-VN') + ' VNĐ' : (data.error||'Lỗi');
+  el.value = data.SODU !== undefined
+    ? Number(data.SODU).toLocaleString('vi-VN')
+    : (data.error || 'Lỗi');
 }
 
 async function kiemTraTKNhan() {
@@ -64,7 +114,8 @@ async function kiemTraTKNhan() {
   const res  = await fetch('/giaodich/api/sodu/' + sotk);
   const data = await res.json();
   if (data.SODU !== undefined) {
-    info.textContent = '✅ Tài khoản hợp lệ. Số dư: ' + Number(data.SODU).toLocaleString('vi-VN') + ' VNĐ';
+    info.innerHTML = '✅ Tài khoản hợp lệ. Số dư: <strong>'
+      + Number(data.SODU).toLocaleString('vi-VN') + ' VNĐ</strong>';
     info.style.color = '#28a745';
   } else {
     info.textContent = '❌ ' + (data.error || 'Không tìm thấy tài khoản');
@@ -72,10 +123,31 @@ async function kiemTraTKNhan() {
   }
 }
 
+function fmtCT(el) {
+  const raw = el.value.replace(/\./g, '').replace(/[^0-9]/g, '');
+  const num = parseInt(raw) || 0;
+  el.value = num === 0 ? '' : num.toLocaleString('vi-VN');
+  document.getElementById('hidden-sotien').value = num;
+}
+
 function xacNhan() {
   const from   = document.getElementById('sotk-chuyen').value;
-  const to     = document.getElementById('sotk-nhan').value;
-  const sotien = document.getElementById('sotien').value;
-  return confirm(`Xác nhận chuyển ${Number(sotien).toLocaleString('vi-VN')} VNĐ\ntừ ${from} → ${to}?`);
+  const to     = document.getElementById('sotk-nhan').value.trim();
+  const sotien = parseInt(document.getElementById('hidden-sotien').value) || 0;
+
+  if (!from) { alert('Vui lòng chọn tài khoản chuyển'); return false; }
+  if (!to)   { alert('Vui lòng nhập tài khoản nhận'); return false; }
+  if (from.trim() === to) { alert('Tài khoản chuyển và nhận không được giống nhau!'); return false; }
+  if (sotien < 1000) { alert('Số tiền tối thiểu là 1.000 VNĐ'); return false; }
+
+  // Kiểm tra số dư
+  const soduText = document.getElementById('sodu-chuyen').value.replace(/\./g, '');
+  const sodu = parseInt(soduText) || 0;
+  if (sotien > sodu) {
+    alert('Số tiền chuyển (' + sotien.toLocaleString('vi-VN') + ' VNĐ) vượt quá số dư hiện tại (' + sodu.toLocaleString('vi-VN') + ' VNĐ)!');
+    return false;
+  }
+
+  return confirm(`Xác nhận chuyển ${sotien.toLocaleString('vi-VN')} VNĐ\ntừ ${from.trim()} → ${to}?`);
 }
 </script>

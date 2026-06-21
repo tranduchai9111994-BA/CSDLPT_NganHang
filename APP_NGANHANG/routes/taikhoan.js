@@ -111,4 +111,41 @@ router.post('/mo', async (req, res) => {
   }
 });
 
+// POST /taikhoan/dong – Đóng (xóa) tài khoản
+router.post('/dong', async (req, res) => {
+  const server = getServer(req);
+  const user = req.session.user;
+  if (!['NganHang', 'ChiNhanh'].includes(user.NHOM)) {
+    return res.redirect('/taikhoan?error=Không có quyền');
+  }
+  const { SOTK } = req.body;
+  try {
+    // Kiểm tra số dư
+    const tkRows = await querySQL(req, server, `
+      SELECT SODU FROM TaiKhoan WHERE RTRIM(SOTK) = @sotk
+    `, { sotk: SOTK });
+    if (tkRows.length === 0) return res.redirect('/taikhoan?error=Tài khoản không tồn tại');
+    if (Number(tkRows[0].SODU) !== 0) {
+      return res.redirect('/taikhoan?error=Không thể đóng tài khoản có số dư khác 0. Vui lòng rút hết tiền trước.');
+    }
+
+    // Kiểm tra giao dịch
+    const gdRows = await querySQL(req, server, `
+      SELECT COUNT(*) AS cnt FROM GD_GOIRUT WHERE RTRIM(SOTK) = @sotk
+    `, { sotk: SOTK });
+    const ctRows = await querySQL(req, server, `
+      SELECT COUNT(*) AS cnt FROM GD_CHUYENTIEN WHERE RTRIM(SOTK_CHUYEN) = @sotk OR RTRIM(SOTK_NHAN) = @sotk
+    `, { sotk: SOTK });
+
+    if (gdRows[0].cnt > 0 || ctRows[0].cnt > 0) {
+      return res.redirect('/taikhoan?error=Không thể đóng tài khoản đã có giao dịch.');
+    }
+
+    await querySQL(req, server, `DELETE FROM TaiKhoan WHERE RTRIM(SOTK) = @sotk`, { sotk: SOTK });
+    res.redirect('/taikhoan?success=Đã đóng tài khoản ' + SOTK);
+  } catch (err) {
+    res.redirect('/taikhoan?error=' + encodeURIComponent(err.message));
+  }
+});
+
 module.exports = router;

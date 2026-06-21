@@ -487,11 +487,13 @@ END
 
 ## SP_TaoTaiKhoan
 ```sql
-CREATE   PROCEDURE [dbo].[SP_TaoTaiKhoan]
+CREATE PROCEDURE [dbo].[SP_TaoTaiKhoan]
     @LGNAME VARCHAR(50), 
     @PASS VARCHAR(50), 
     @USERNAME VARCHAR(50), 
-    @ROLE VARCHAR(50)
+    @ROLE VARCHAR(50),
+    @LOAITK VARCHAR(20),   -- 'NhanVien' hoặc 'KhachHang'
+    @MATHAMCHIEU VARCHAR(50) -- MANV hoặc CMND
 WITH EXECUTE AS OWNER
 AS
 BEGIN
@@ -511,9 +513,9 @@ BEGIN
 
     BEGIN TRY
         DECLARE @SqlStr VARCHAR(MAX);
-        SET @PASS = REPLACE(@PASS, '''', '''''');
+        DECLARE @PassEscaped VARCHAR(50) = REPLACE(@PASS, '''', '''''');
         
-        SET @SqlStr = 'CREATE LOGIN ' + QUOTENAME(@LGNAME) + ' WITH PASSWORD = ''' + @PASS + ''', CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF;';
+        SET @SqlStr = 'CREATE LOGIN ' + QUOTENAME(@LGNAME) + ' WITH PASSWORD = ''' + @PassEscaped + ''', CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF;';
         EXEC(@SqlStr);
 
         SET @SqlStr = 'CREATE USER ' + QUOTENAME(@USERNAME) + ' FOR LOGIN ' + QUOTENAME(@LGNAME) + ';';
@@ -521,6 +523,10 @@ BEGIN
 
         SET @SqlStr = 'EXEC sp_addrolemember ''' + REPLACE(@ROLE, '''', '''''') + ''', ' + QUOTENAME(@USERNAME) + ';';
         EXEC(@SqlStr);
+
+        -- Ghi vào bảng quản trị để phục vụ tính năng theo dõi + xem mật khẩu
+        INSERT INTO dbo.QuanTriLogin (LoginName, MatKhauHienTai, LoaiTaiKhoan, MaThamChieu, NhomQuyen, NgayTao)
+        VALUES (@LGNAME, @PASS, @LOAITK, @MATHAMCHIEU, @ROLE, GETDATE());
 
         RETURN 0;
     END TRY
@@ -561,6 +567,87 @@ BEGIN
         DECLARE @ErrMsg nvarchar(4000) = ERROR_MESSAGE();
         RAISERROR(@ErrMsg, 16, 1);
     END CATCH
+END
+```
+
+## SP_ResetMatKhau
+```sql
+CREATE PROCEDURE [dbo].[SP_ResetMatKhau]
+    @LGNAME      VARCHAR(50),
+    @MATKHAU_MOI VARCHAR(50) = '123456'
+WITH EXECUTE AS OWNER
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @LGNAME)
+    BEGIN
+        RAISERROR(N'Login không tồn tại trên server này.', 16, 1);
+        RETURN 1;
+    END
+
+    BEGIN TRY
+        DECLARE @SqlStr VARCHAR(MAX);
+        DECLARE @PassEscaped VARCHAR(50) = REPLACE(@MATKHAU_MOI, '''', '''''');
+
+        SET @SqlStr = 'ALTER LOGIN ' + QUOTENAME(@LGNAME) + ' WITH PASSWORD = ''' + @PassEscaped + ''';';
+        EXEC(@SqlStr);
+
+        UPDATE dbo.QuanTriLogin
+        SET MatKhauHienTai = @MATKHAU_MOI,
+            NgayCapNhatMK  = GETDATE()
+        WHERE LoginName = @LGNAME;
+
+        RETURN 0;
+    END TRY
+    BEGIN CATCH
+        DECLARE @ErrMsg nvarchar(4000) = ERROR_MESSAGE();
+        RAISERROR(@ErrMsg, 16, 1);
+        RETURN 2;
+    END CATCH
+END
+```
+
+## SP_DanhSachTrangThaiLogin
+```sql
+CREATE PROCEDURE [dbo].[SP_DanhSachTrangThaiLogin]
+    @MACN nchar(10) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT 
+        'NhanVien' AS LoaiTK,
+        nv.MANV AS MaThamChieu,
+        RTRIM(nv.HO) + ' ' + RTRIM(nv.TEN) AS HoTen,
+        RTRIM(nv.MACN) AS MACN,
+        CASE WHEN ql.LoginName IS NOT NULL THEN 1 ELSE 0 END AS DaCapTaiKhoan,
+        ql.LoginName,
+        ql.NhomQuyen,
+        ql.NgayTao,
+        ql.NgayCapNhatMK
+    FROM NhanVien nv
+    LEFT JOIN dbo.QuanTriLogin ql ON RTRIM(ql.MaThamChieu) = RTRIM(nv.MANV) AND ql.LoaiTaiKhoan = 'NhanVien'
+    WHERE nv.TrangThaiXoa = 0
+      AND (@MACN IS NULL OR RTRIM(nv.MACN) = RTRIM(@MACN))
+
+    UNION ALL
+
+    SELECT 
+        'KhachHang' AS LoaiTK,
+        kh.CMND AS MaThamChieu,
+        RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen,
+        RTRIM(kh.MACN) AS MACN,
+        CASE WHEN ql.LoginName IS NOT NULL THEN 1 ELSE 0 END AS DaCapTaiKhoan,
+        ql.LoginName,
+        ql.NhomQuyen,
+        ql.NgayTao,
+        ql.NgayCapNhatMK
+    FROM KhachHang kh
+    LEFT JOIN dbo.QuanTriLogin ql ON RTRIM(ql.MaThamChieu) = RTRIM(kh.CMND) AND ql.LoaiTaiKhoan = 'KhachHang'
+    WHERE (@MACN IS NULL OR RTRIM(kh.MACN) = RTRIM(@MACN))
+
+    ORDER BY LoaiTK, DaCapTaiKhoan ASC, HoTen;
 END
 ```
 

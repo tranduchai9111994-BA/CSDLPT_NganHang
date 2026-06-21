@@ -23,7 +23,12 @@ app.use('/giaodich', requireLogin, requireRole('NganHang', 'ChiNhanh'), giaoDich
 ```
 Nếu nhóm `KhachHang` cố tình truy cập các link trên, họ sẽ nhận mã lỗi HTTP 403 (Forbidden).
 
-## 3. Mức Giao Diện (UI - View)
+## 3. Quản Lý & Cấp Phát Login (Tính năng đặc biệt)
+Tính năng tạo và cấp phát Login (Form "Tạo Tài Khoản") đòi hỏi thao tác cấp Server (`CREATE LOGIN`, `ALTER LOGIN`). Quyền thao tác này không được giao cho các tài khoản NV thông thường. Thay vào đó:
+- Hệ thống sử dụng một **Admin Pool** (kết nối ngầm bằng tài khoản SA hoặc tài khoản có quyền `securityadmin`) chỉ riêng cho chức năng cấp phát tài khoản và đặt lại mật khẩu. **Mọi chức năng nghiệp vụ khác** vẫn tuân thủ 100% bằng Pool của chính người dùng (SQL Authentication).
+- **Lưu mật khẩu phụ trợ (`QuanTriLogin`)**: SQL Server lưu mật khẩu dưới dạng Hash 1 chiều, không thể đọc lại. Để phục vụ mục đích kiểm thử và quản lý đồ án (ví dụ như quên mật khẩu test), hệ thống chủ động lưu thêm một bản sao mật khẩu dạng plain-text tại bảng độc lập `QuanTriLogin`. Bảng này bị khóa bằng lệnh `DENY SELECT` đối với `ChiNhanh` và `KhachHang`, chỉ `NganHang` (Admin) mới có quyền truy cập thông qua một API được kiểm duyệt chặt chẽ bởi middleware Backend.
+
+## 4. Mức Giao Diện (UI - View)
 Trong các file `.ejs`, sử dụng thẻ `if` để ẩn/hiện menu dựa trên nhóm quyền, nhằm mang lại trải nghiệm người dùng tốt (không thấy các chức năng không được phép sử dụng):
 ```ejs
 <% if (['ChiNhanh', 'NganHang'].includes(user.NHOM)) { %>

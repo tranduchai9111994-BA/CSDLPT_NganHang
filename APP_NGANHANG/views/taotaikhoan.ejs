@@ -22,23 +22,26 @@
                         <option value="">-- Vui lòng chọn nhân viên --</option>
                         <% if(typeof nhanviens !== 'undefined') { %>
                             <% nhanviens.forEach(nv => { %>
-                                <option value="<%= nv.MANV %>"><%= nv.MANV %> - <%= nv.HO %> <%= nv.TEN %></option>
+                                <option value="<%= nv.MANV %>"><%= nv.MANV %> - <%= nv.HO %> <%= nv.TEN %><%= nv.MACN ? ' [' + nv.MACN + ']' : '' %></option>
                             <% }) %>
                         <% } %>
                     </select>
                 </div>
                 <div style="margin-bottom: 15px;">
                     <label style="font-weight: bold; display: block; margin-bottom: 5px;">Tên Đăng Nhập (Login Name)</label>
-                    <input type="text" style="width: 100%; padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px;" name="LoginName" placeholder="Ví dụ: NV01_Login" required>
+                    <input type="text" id="txtLoginNV" style="width: 100%; padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px;" name="LoginName" placeholder="Ví dụ: NV01_Login" required>
                 </div>
                 <div style="margin-bottom: 15px;">
                     <label style="font-weight: bold; display: block; margin-bottom: 5px;">Mật khẩu (Password)</label>
-                    <input type="password" style="width: 100%; padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px;" name="Password" placeholder="Nhập mật khẩu" required>
+                    <div style="position: relative;">
+                        <input type="password" id="pwdNV" style="width: 100%; padding: 8px 36px 8px 12px; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box;" name="Password" placeholder="Nhập mật khẩu" required>
+                        <i class="fas fa-eye" id="eyeNV" onclick="toggleFormPwd('pwdNV','eyeNV')" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); cursor:pointer; color:#6c757d;"></i>
+                    </div>
                 </div>
                 <div style="margin-bottom: 20px;">
                     <label style="font-weight: bold; display: block; margin-bottom: 5px;">Nhóm Quyền (Role)</label>
-                    <input type="text" style="width: 100%; padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px; background-color: #e9ecef; color: #495057;" name="Role" value="<%= user.NHOM %>" readonly>
-                    <small style="color: #dc3545; display: block; margin-top: 5px; font-size: 13px;">* Chỉ được tạo tài khoản cùng nhóm quyền với mình.</small>
+                    <input type="text" style="width: 100%; padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px; background-color: #e9ecef; color: #495057;" name="Role" value="ChiNhanh" readonly>
+                    <small style="color: #dc3545; display: block; margin-top: 5px; font-size: 13px;">* Nhân viên được gán quyền ChiNhanh (quản lý chi nhánh của mình).</small>
                 </div>
                 <button type="submit" style="width: 100%; padding: 10px; background-color: #0d6efd; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 15px; margin-bottom: 10px;">Tạo Tài Khoản Nhân Viên</button>
                 <a href="/" style="display: block; text-align: center; width: 100%; padding: 10px; background-color: #6c757d; color: white; border: none; border-radius: 4px; font-weight: bold; text-decoration: none; font-size: 15px;">Hủy</a>
@@ -70,7 +73,10 @@
                 </div>
                 <div style="margin-bottom: 15px;">
                     <label style="font-weight: bold; display: block; margin-bottom: 5px;">Mật khẩu (Mã PIN)</label>
-                    <input type="password" style="width: 100%; padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px;" name="Password" placeholder="Nhập mã PIN 6 số..." required>
+                    <div style="position: relative;">
+                        <input type="password" id="pwdKH" style="width: 100%; padding: 8px 36px 8px 12px; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box;" name="Password" placeholder="Nhập mã PIN 6 số..." required>
+                        <i class="fas fa-eye" id="eyeKH" onclick="toggleFormPwd('pwdKH','eyeKH')" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); cursor:pointer; color:#6c757d;"></i>
+                    </div>
                 </div>
                 <div style="margin-bottom: 20px;">
                     <label style="font-weight: bold; display: block; margin-bottom: 5px;">Nhóm Quyền (Role)</label>
@@ -84,3 +90,222 @@
     </div>
 
 </div>
+
+<div style="margin-top: 30px; border: 1px solid #ced4da; border-radius: 8px; overflow: hidden; background-color: #fff; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+    <div style="background-color: #343a40; color: white; padding: 12px 15px; font-weight: bold; font-size: 16px;">
+        <i class="fas fa-list"></i> Danh sách trạng thái Tài khoản
+    </div>
+    <div style="padding: 20px; overflow-x: auto;">
+        <table class="table table-bordered table-striped">
+            <thead class="table-dark">
+                <tr>
+                    <th>Loại</th>
+                    <th>Mã (MANV/CMND)</th>
+                    <th>Họ Tên</th>
+                    <th>Chi nhánh</th>
+                    <th>Trạng thái</th>
+                    <th>Login Name</th>
+                    <th>Nhóm Quyền</th>
+                    <% if (user.NHOM === 'NganHang') { %>
+                        <th>Mật khẩu</th>
+                    <% } %>
+                    <th>Ngày cập nhật</th>
+                    <th>Thao tác</th>
+                </tr>
+            </thead>
+            <tbody id="login-status-tbody">
+                <!-- JS sẽ render dòng vào đây -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+async function loadLoginStatusTable() {
+  const tbody = document.getElementById('login-status-tbody');
+  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:20px;">Đang tải dữ liệu...</td></tr>';
+
+  try {
+    const res = await fetch('/quantri/login-management/list');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+
+    if (!data || data.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:20px;">Không có dữ liệu</td></tr>';
+      return;
+    }
+
+    const isNganHang = '<%= user.NHOM %>' === 'NganHang';
+
+    tbody.innerHTML = data.map(row => {
+      let actionHtml = '';
+      let passHtml = '';
+
+      if (row.DaCapTaiKhoan === 1) {
+          if (isNganHang) {
+              actionHtml = `<button class="btn btn-sm" style="background:#f59e0b; color:#fff; border:none;" onclick="resetPassword('${row.LoginName}', '${row.HoTen}')"><i class="fas fa-key"></i> Reset MK</button>`;
+              passHtml = `
+                  <td>
+                      <span id="pass_${row.LoginName}">******</span>
+                      <i class="fas fa-eye" style="cursor: pointer; margin-left: 5px; color: #0d6efd;" onclick="togglePassword('${row.LoginName}')"></i>
+                  </td>
+              `;
+          } else {
+              actionHtml = `<span class="text-muted">Không có quyền</span>`;
+          }
+      } else if (row.DaCapTaiKhoan === 2) {
+          // Lỗi đồng bộ: có trong QuanTriLogin nhưng login đã bị xóa khỏi SQL Server
+          const canRecreate = isNganHang || row.LoaiTK === 'KhachHang';
+          if (canRecreate) {
+              actionHtml = `<button class="btn btn-sm" style="background:#dc2626; color:#fff; border:none;" onclick="cleanupAndRecreate('${row.LoginName}', '${row.MaThamChieu}', '${row.LoaiTK}')"><i class="fas fa-redo"></i> Tạo lại</button>`;
+              passHtml = isNganHang ? `<td><span style="color:#dc2626;">— lỗi —</span></td>` : '';
+          } else {
+              actionHtml = `<span class="text-muted">Không có quyền</span>`;
+              passHtml = isNganHang ? `<td>—</td>` : '';
+          }
+      } else {
+          actionHtml = `<button class="btn btn-sm" style="background:#2563eb; color:#fff; border:none;" onclick="prefillForm('${row.LoaiTK}', '${row.MaThamChieu}')"><i class="fas fa-plus"></i> Cấp TK</button>`;
+          if (isNganHang) {
+              passHtml = `<td>—</td>`;
+          }
+      }
+
+        const rawDate = row.NgayCapNhatMK || row.NgayTao;
+        let dateHtml = '—';
+        if (rawDate) {
+            const datePart = rawDate.substring(0, 10);
+            const parts = datePart.split('-');
+            if (parts.length === 3) {
+                dateHtml = `${parts[2]}/${parts[1]}/${parts[0]}`;
+            }
+        }
+
+      return `
+      <tr>
+        <td>
+          <span style="background:${row.LoaiTK === 'NhanVien' ? '#2563eb' : '#16a34a'}; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600;">
+            ${row.LoaiTK === 'NhanVien' ? 'NHÂN VIÊN' : 'KHÁCH HÀNG'}
+          </span>
+        </td>
+        <td>${row.MaThamChieu || ''}</td>
+        <td>${row.HoTen || ''}</td>
+        <td>${row.MACN || ''}</td>
+        <td>
+          ${row.DaCapTaiKhoan === 1
+            ? '<span style="color:#16a34a; font-weight:600;">● Đã cấp</span>'
+            : row.DaCapTaiKhoan === 2
+              ? '<span style="color:#dc2626; font-weight:600;">⚠ Lỗi đồng bộ</span>'
+              : '<span style="color:#6b7280; font-weight:600;">● Chưa cấp</span>'}
+        </td>
+        <td>${row.LoginName || '—'}</td>
+        <td>${row.NhomQuyen || '—'}</td>
+        ${isNganHang ? passHtml : ''}
+        <td>${dateHtml}</td>
+        <td>${actionHtml}</td>
+      </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:20px; color:#dc2626;">Lỗi tải dữ liệu: ${err.message}</td></tr>`;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadLoginStatusTable);
+
+function togglePassword(loginName) {
+    const span = document.getElementById('pass_' + loginName);
+    if (span.innerText.trim() === '******') {
+        fetch('/quantri/login-management/password/' + loginName)
+            .then(res => {
+                if(!res.ok) throw new Error('Không có quyền hoặc lỗi API');
+                return res.json();
+            })
+            .then(data => {
+                span.innerText = data.password;
+            })
+            .catch(err => alert(err.message));
+    } else {
+        span.innerText = '******';
+    }
+}
+
+function resetPassword(loginName, hoTen) {
+    if (confirm(`Đặt lại mật khẩu về mặc định (123456) cho tài khoản của ${hoTen} (${loginName})?`)) {
+        fetch('/quantri/login-management/reset-password', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ loginName: loginName })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if(data.success) {
+                alert(data.message);
+                loadLoginStatusTable();
+            } else {
+                alert('Lỗi: ' + data.error);
+            }
+        })
+        .catch(err => alert("Lỗi khi gọi API: " + err.message));
+    }
+}
+
+function cleanupAndRecreate(loginName, maThamChieu, loaiTK) {
+    if (!confirm(`Tài khoản "${loginName}" bị lỗi đồng bộ (login không tồn tại trên server).\nBấm OK để xóa dữ liệu cũ và cho phép tạo lại.`)) return;
+
+    fetch('/quantri/login-management/cleanup-sync-error', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ loginName: loginName, userName: maThamChieu })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            loadLoginStatusTable();
+            prefillForm(loaiTK, maThamChieu);
+        } else {
+            alert('Lỗi khi dọn dẹp: ' + data.error);
+        }
+    })
+    .catch(err => alert('Lỗi kết nối: ' + err.message));
+}
+
+function toggleFormPwd(inputId, iconId) {
+    const inp = document.getElementById(inputId);
+    const icon = document.getElementById(iconId);
+    if (inp.type === 'password') {
+        inp.type = 'text';
+        icon.classList.replace('fa-eye', 'fa-eye-slash');
+    } else {
+        inp.type = 'password';
+        icon.classList.replace('fa-eye-slash', 'fa-eye');
+    }
+}
+
+function prefillForm(loaiTK, maThamChieu) {
+    if (loaiTK === 'NhanVien') {
+        const selectNV = document.querySelector('select[name="UserName"]');
+        if(selectNV) {
+            selectNV.value = maThamChieu;
+            // Clear các field nhập liệu để tránh submit nhầm giá trị cũ
+            const loginField = document.getElementById('txtLoginNV');
+            const pwdField = document.getElementById('pwdNV');
+            if (loginField) loginField.value = '';
+            if (pwdField) pwdField.value = '';
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            if (loginField) loginField.focus();
+        }
+    } else {
+        const selectKH = document.querySelectorAll('select[name="UserName"]')[1];
+        if(selectKH) {
+            selectKH.value = maThamChieu;
+            selectKH.dispatchEvent(new Event('change'));
+            const pwdField = document.getElementById('pwdKH');
+            if (pwdField) pwdField.value = '';
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            if (pwdField) pwdField.focus();
+        }
+    }
+}
+</script>

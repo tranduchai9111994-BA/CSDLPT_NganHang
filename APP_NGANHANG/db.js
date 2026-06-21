@@ -58,6 +58,27 @@ const configs = {
 
 const pools = {};
 
+// Pool dùng account HTKN (admin) - cho các lệnh DDL cần quyền server-level
+const adminPools = {};
+
+async function getAdminPool(serverKey) {
+  const key = serverKey || 'BENTHANH';
+  if (!adminPools[key]) {
+    const serverConfig = configs[key];
+    if (!serverConfig) throw new Error(`Không tìm thấy cấu hình server: ${key}`);
+    adminPools[key] = await new sql.ConnectionPool({
+      server: serverConfig.server,
+      database: serverConfig.database,
+      user: serverConfig.user,
+      password: serverConfig.password,
+      options: serverConfig.options,
+      pool: serverConfig.pool
+    }).connect();
+    console.log(`[DB Admin] Đã kết nối admin pool: ${key}`);
+  }
+  return adminPools[key];
+}
+
 async function getPool(req, serverKey) {
   const user = req.session.user;
   if (!user || !user.USERNAME || !user.PASSWORD) {
@@ -112,4 +133,4 @@ async function querySQL(req, serverKey, sqlStr, params = {}) {
   return result.recordset || [];
 }
 
-module.exports = { getPool, execSP, querySP, querySQL, sql, configs };
+module.exports = { getPool, getAdminPool, execSP, querySP, querySQL, sql, configs };

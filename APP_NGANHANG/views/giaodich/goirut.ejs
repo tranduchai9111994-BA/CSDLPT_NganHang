@@ -3,15 +3,67 @@
 <% if (success) { %><div class="alert alert-success">✅ <%= success %></div><% } %>
 <% if (error)   { %><div class="alert alert-error">❌ <%= error %></div><% } %>
 
+<style>
+.money-input-wrap {
+  position: relative;
+}
+.money-input-wrap .money-display {
+  width: 100%;
+  padding: 8px 52px 8px 12px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 15px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-weight: 600;
+  color: #1a3a5c;
+  box-sizing: border-box;
+  letter-spacing: 0.5px;
+}
+.money-input-wrap .money-display:focus {
+  outline: none;
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 2px rgba(13,110,253,0.15);
+}
+.money-input-wrap .currency-tag {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 700;
+  color: #888;
+  pointer-events: none;
+  letter-spacing: 0.5px;
+}
+.sodu-display {
+  width: 100%;
+  padding: 8px 52px 8px 12px;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  font-size: 15px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-weight: 700;
+  background: #f8f9fa;
+  box-sizing: border-box;
+  letter-spacing: 0.5px;
+}
+.min-hint {
+  font-size: 11px;
+  color: #999;
+  margin-top: 4px;
+  display: block;
+}
+</style>
+
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
 
   <!-- GỬI TIỀN -->
   <div class="form-card">
     <h3 style="color:#28a745;margin-bottom:14px;">⬆️ Gửi tiền</h3>
-    <form method="POST" action="/giaodich/guitien">
+    <form method="POST" action="/giaodich/guitien" onsubmit="return submitMoney('hidden-gui','display-gui')">
       <div class="form-group">
         <label>Số tài khoản</label>
-        <select name="SOTK" id="sotk-gui" onchange="loadSoDu(this,'sodu-gui')" required>
+        <select name="SOTK" id="sotk-gui" onchange="loadSoDu(this,'sodu-gui','#28a745')" required>
           <option value="">-- Chọn tài khoản --</option>
           <% tkRows.forEach(tk => { %>
             <option value="<%= tk.SOTK %>"><%= tk.SOTK %></option>
@@ -20,23 +72,34 @@
       </div>
       <div class="form-group">
         <label>Số dư hiện tại</label>
-        <input type="text" id="sodu-gui" readonly style="background:#f8f9fa;color:#28a745;font-weight:bold;">
+        <div class="money-input-wrap">
+          <input type="text" id="sodu-gui" readonly class="sodu-display" style="color:#28a745;" value="—">
+          <span class="currency-tag">VNĐ</span>
+        </div>
       </div>
       <div class="form-group">
-        <label>Số tiền gửi (tối thiểu 100,000 VNĐ)</label>
-        <input type="number" name="SOTIEN" min="100000" step="100000" required placeholder="100000">
+        <label>Số tiền gửi</label>
+        <div class="money-input-wrap">
+          <input type="text" id="display-gui" class="money-display"
+                 placeholder="100.000" required
+                 oninput="formatMoneyInput(this,'hidden-gui')"
+                 onkeypress="return isDigit(event)">
+          <span class="currency-tag">VNĐ</span>
+        </div>
+        <span class="min-hint">Tối thiểu 100.000 VNĐ</span>
+        <input type="hidden" name="SOTIEN" id="hidden-gui">
       </div>
-      <button type="submit" class="btn btn-success">Gửi tiền</button>
+      <button type="submit" class="btn btn-success" style="width:100%;">Gửi tiền</button>
     </form>
   </div>
 
   <!-- RÚT TIỀN -->
   <div class="form-card">
     <h3 style="color:#dc3545;margin-bottom:14px;">⬇️ Rút tiền</h3>
-    <form method="POST" action="/giaodich/ruttien">
+    <form method="POST" action="/giaodich/ruttien" onsubmit="return submitMoney('hidden-rut','display-rut')">
       <div class="form-group">
         <label>Số tài khoản</label>
-        <select name="SOTK" id="sotk-rut" onchange="loadSoDu(this,'sodu-rut')" required>
+        <select name="SOTK" id="sotk-rut" onchange="loadSoDu(this,'sodu-rut','#dc3545')" required>
           <option value="">-- Chọn tài khoản --</option>
           <% tkRows.forEach(tk => { %>
             <option value="<%= tk.SOTK %>"><%= tk.SOTK %></option>
@@ -45,30 +108,64 @@
       </div>
       <div class="form-group">
         <label>Số dư hiện tại</label>
-        <input type="text" id="sodu-rut" readonly style="background:#f8f9fa;color:#dc3545;font-weight:bold;">
+        <div class="money-input-wrap">
+          <input type="text" id="sodu-rut" readonly class="sodu-display" style="color:#dc3545;" value="—">
+          <span class="currency-tag">VNĐ</span>
+        </div>
       </div>
       <div class="form-group">
-        <label>Số tiền rút (tối thiểu 100,000 VNĐ)</label>
-        <input type="number" name="SOTIEN" min="100000" step="100000" required placeholder="100000">
+        <label>Số tiền rút</label>
+        <div class="money-input-wrap">
+          <input type="text" id="display-rut" class="money-display"
+                 placeholder="100.000" required
+                 oninput="formatMoneyInput(this,'hidden-rut')"
+                 onkeypress="return isDigit(event)">
+          <span class="currency-tag">VNĐ</span>
+        </div>
+        <span class="min-hint">Tối thiểu 100.000 VNĐ</span>
+        <input type="hidden" name="SOTIEN" id="hidden-rut">
       </div>
-      <button type="submit" class="btn btn-danger">Rút tiền</button>
+      <button type="submit" class="btn btn-danger" style="width:100%;">Rút tiền</button>
     </form>
   </div>
 </div>
 
 <script>
-async function loadSoDu(selectEl, targetId) {
+async function loadSoDu(selectEl, targetId, color) {
   const sotk = selectEl.value;
-  if (!sotk) return;
+  const el = document.getElementById(targetId);
+  if (!sotk) { el.value = '—'; return; }
   try {
     const res = await fetch('/giaodich/api/sodu/' + sotk);
     const data = await res.json();
-    const el = document.getElementById(targetId);
     if (data.SODU !== undefined) {
-      el.value = Number(data.SODU).toLocaleString('vi-VN') + ' VNĐ';
+      el.value = Number(data.SODU).toLocaleString('vi-VN');
+      el.style.color = color;
     } else {
       el.value = data.error || 'Lỗi';
     }
-  } catch(e) { console.error(e); }
+  } catch(e) { el.value = 'Lỗi'; }
+}
+
+function isDigit(e) {
+  return e.key >= '0' && e.key <= '9';
+}
+
+function formatMoneyInput(displayEl, hiddenId) {
+  const raw = displayEl.value.replace(/\./g, '').replace(/[^0-9]/g, '');
+  const num = parseInt(raw) || 0;
+  // Format với dấu chấm ngàn theo kiểu VN
+  displayEl.value = num === 0 ? '' : num.toLocaleString('vi-VN');
+  document.getElementById(hiddenId).value = num;
+}
+
+function submitMoney(hiddenId, displayId) {
+  const val = parseInt(document.getElementById(hiddenId).value) || 0;
+  if (val < 100000) {
+    alert('Số tiền tối thiểu là 100.000 VNĐ');
+    document.getElementById(displayId).focus();
+    return false;
+  }
+  return true;
 }
 </script>

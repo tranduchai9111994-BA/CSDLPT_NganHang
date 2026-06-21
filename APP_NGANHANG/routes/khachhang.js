@@ -1,7 +1,7 @@
 // routes/khachhang.js
 const express = require('express');
 const router = express.Router();
-const { querySQL, execSP } = require('../db');
+const { querySQL, execSP, getAdminPool, sql } = require('../db');
 
 // Lấy serverKey từ session
 function getServer(req) {
@@ -66,15 +66,50 @@ router.post('/them', async (req, res) => {
       CMND, HO, TEN, DIACHI, PHAI, NGAYCAP, SODT, MACN
     });
 
-    // Tạo Login SQL cho Khách hàng mới
-    await execSP(req, server, 'SP_TaoTaiKhoan', {
-      LGNAME: CMND,
-      PASS: password,
-      USERNAME: CMND,
-      ROLE: 'KhachHang'
-    });
+    // Tạo Login SQL trên tất cả server bằng adminPool
+    const safeCMND = CMND.replace(/]/g, ']]');
+    const safePass = password.replace(/'/g, "''");
+    const serverKeys = ['BENTHANH', 'TANDINH', 'TRACUU'];
 
-    res.redirect('/khachhang?success=Thêm khách hàng thành công');
+    for (const srvKey of serverKeys) {
+      try {
+        const pool = await getAdminPool(srvKey);
+
+        const loginExists = await pool.request()
+          .input('LN', sql.VarChar, CMND)
+          .query(`SELECT 1 FROM sys.server_principals WHERE name = @LN`);
+        if (loginExists.recordset.length === 0) {
+          await pool.request().query(
+            `CREATE LOGIN [${safeCMND}] WITH PASSWORD = '${safePass}', CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF`
+          );
+        }
+
+        const userExists = await pool.request()
+          .input('UN', sql.VarChar, CMND)
+          .query(`SELECT 1 FROM sys.database_principals WHERE name = @UN`);
+        if (userExists.recordset.length === 0) {
+          await pool.request().query(`CREATE USER [${safeCMND}] FOR LOGIN [${safeCMND}]`);
+        }
+
+        await pool.request().query(`EXEC sp_addrolemember 'KhachHang', [${safeCMND}]`);
+
+        const qtlExists = await pool.request()
+          .input('LN2', sql.VarChar, CMND)
+          .query(`SELECT 1 FROM dbo.QuanTriLogin WHERE LoginName = @LN2`);
+        if (qtlExists.recordset.length === 0) {
+          await pool.request()
+            .input('LoginName', sql.VarChar, CMND)
+            .input('MatKhau', sql.VarChar, password)
+            .input('MaThamChieu', sql.VarChar, CMND)
+            .query(`INSERT INTO dbo.QuanTriLogin (LoginName, MatKhauHienTai, LoaiTaiKhoan, MaThamChieu, NhomQuyen, NgayTao)
+                    VALUES (@LoginName, @MatKhau, 'KhachHang', @MaThamChieu, 'KhachHang', GETDATE())`);
+        }
+      } catch (e) {
+        console.error(`[ThemKH-Login] ${srvKey}: ${e.message}`);
+      }
+    }
+
+    res.redirect('/khachhang?success=Thêm khách hàng và tạo tài khoản thành công');
   } catch (err) {
     res.render('khachhang/form', {
       kh: req.body, action: 'them',

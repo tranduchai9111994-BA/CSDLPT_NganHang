@@ -80,3 +80,4 @@ Bộ tài liệu chi tiết được đính kèm trong thư mục `/doc/` để 
 - `Reports_Checklist.md`: Tiến độ thực hiện các chức năng báo cáo, sao kê.
 - `SP_Sync_Status.md`: Báo cáo giám sát hiện trạng đồng bộ SP.
 - `Su_Co_Va_Xu_Ly.md`: Các kịch bản và cách rà soát lỗi Database phức tạp.
+- `18_DanhGia_CoChePhanTan.md`: **Đánh giá cơ chế phân tán** — rà soát toàn bộ logic source code & DB (Linked Server, Replication, Stored Procedure, Phân quyền), chỉ ra các điểm đang xử lý bằng code thay vì theo cơ chế phân tán và đưa ra khuyến nghị xử lý (ưu tiên theo mức độ).

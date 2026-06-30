@@ -167,3 +167,111 @@ execFile('sqlcmd', [
 
 **Bài học rút ra:**
 > Khi thiết kế hệ thống CSDL Phân Tán, nếu bắt buộc phải dùng `BEGIN DISTRIBUTED TRANSACTION` trong Stored Procedure, cần đảm bảo Driver của ngôn ngữ lập trình phía Backend (Node.js, Java, .NET) hỗ trợ MSDTC. Nếu không, phải dùng cách bọc tiến trình hoặc gọi Native driver.
+
+---
+
+## Sự cố 5: MANV trùng giữa 2 chi nhánh khi chuyển nhân viên
+
+**Triệu chứng:**
+Nhân viên `NV01` tồn tại ở cả BENTHANH (SQL1) và TANDINH (SQL2). Khi chuyển nhân viên từ chi nhánh này sang chi nhánh kia, SP_ChuyenNhanVien INSERT thẳng MANV cũ vào chi nhánh đích → lỗi `UNIQUE KEY violation` hoặc ghi đè nhân viên sai.
+
+**Nguyên nhân gốc rễ:**
+MANV ban đầu (`NV01`, `NV02`...) không mang thông tin chi nhánh. 2 chi nhánh độc lập đều sinh MANV từ 1, dẫn đến không gian MANV trùng nhau hoàn toàn.
+
+**Cách xử lý đã áp dụng:**
+Triển khai hệ thống **prefix MANV theo chi nhánh**:
+- BENTHANH: `BT001`, `BT002`, `BT003`...
+- TANDINH: `TD001`, `TD002`, `TD003`, `TD004`...
+
+Migration 3 bước:
+1. Chạy `sql/setup/migrate_manv_benthanh.sql` trên SQL1 → đổi NV01→BT001, NV02→BT002, NV03→BT003; đổi tên SQL Login tương ứng.
+2. Chạy `sql/setup/migrate_manv_tandinh.sql` trên SQL2 → đổi NV01→TD001... NV04→TD004; đổi tên SQL Login.
+3. Chạy `sql/setup/migrate_quantrilogin.sql` trên cả 3 server → xóa record `QuanTriLogin` kiểu cũ (`NV01_BT`, `NV02_TD`...), INSERT lại với `LoginName = MANV mới`.
+
+SP_ChuyenNhanVien cũng được cập nhật: khi chuyển sang chi nhánh đích, sinh MANV mới với prefix của chi nhánh đó (không sao chép MANV cũ).
+
+**Bài học rút ra:**
+> Trong mô hình phân mảnh ngang theo chi nhánh, các khóa chính (PK) tự sinh phải mang thông tin phân mảnh (prefix/suffix) để đảm bảo tính duy nhất toàn cục. Không nên để các mảnh độc lập tự sinh PK từ 1.
+
+---
+
+## Sự cố 7: PUB_TRACUU subscription hỏng sau khi bỏ article [30/06/2026]
+
+**Triệu chứng:**
+Sau khi sửa PUB_TRACUU (bỏ 5 article, chỉ giữ KhachHang), Merge Agent báo lỗi:
+```
+The publication 'PUB_TRACUU' does not exist. (Error 20026)
+The subscription to publication 'PUB_TRACUU' could not be verified. (MSSQL_REPL-2147201019)
+Login failed for user 'NT AUTHORITY\SYSTEM'. (Error 18456)
+```
+
+**Nguyên nhân gốc rễ:**
+1. Subscription metadata trên SQL3 bị lệch với Publication mới trên NGUON sau khi thay đổi article.
+2. Merge Agent chạy dưới account `NT AUTHORITY\SYSTEM` nhưng account này không có quyền truy cập database `NGANHANG` trên SQL3.
+3. Các bảng cũ (NhanVien, TaiKhoan, GD_GOIRUT, GD_CHUYENTIEN, ChiNhanh) vẫn tồn tại trên SQL3 dù không còn replicate — Replication chỉ ngưng đồng bộ, không tự xóa bảng.
+
+**Cách xử lý đã áp dụng (5 bước):**
+
+1. **SQL3:** Dọn metadata cũ:
+```sql
+EXEC sp_removedbreplication @dbname = 'NGANHANG', @type = 'merge';
+```
+
+2. **SQL3:** DROP bảng thừa (FK phải xóa trước):
+```sql
+DROP TABLE IF EXISTS dbo.GD_CHUYENTIEN, dbo.GD_GOIRUT, dbo.NhanVien, dbo.TaiKhoan;
+-- ChiNhanh bị FK_KhachHang_ChiNhanh giữ → xóa FK trước
+ALTER TABLE KhachHang DROP CONSTRAINT FK_KhachHang_ChiNhanh;
+DROP TABLE dbo.ChiNhanh;
+```
+
+3. **SQL3:** Cấp quyền cho Merge Agent:
+```sql
+CREATE LOGIN [NT AUTHORITY\SYSTEM] FROM WINDOWS;
+CREATE USER [NT AUTHORITY\SYSTEM] FOR LOGIN [NT AUTHORITY\SYSTEM];
+ALTER ROLE db_owner ADD MEMBER [NT AUTHORITY\SYSTEM];
+```
+
+4. **NGUON:** Tạo lại subscription (Push):
+```sql
+EXEC sp_addmergesubscription
+    @publication = 'PUB_TRACUU',
+    @subscriber = 'ES-HAITD16\SQL3',
+    @subscriber_db = 'NGANHANG',
+    @subscription_type = 'Push';
+```
+
+5. **NGUON:** Start Snapshot Agent + Start Merge Agent Job:
+```sql
+EXEC msdb.dbo.sp_start_job @job_name = 'ES-HAITD16-NGANHANG-PUB_TRACUU-ES-HAITD16\SQL3-4';
+```
+
+6. **SQL3:** Deploy lại SP đặc thù TRACUU (bị xóa bởi `sp_removedbreplication`):
+```sql
+-- Chạy sql/deploy_tracuu.sql
+```
+
+**Kết quả:** SQL3 chỉ còn 2 bảng: `KhachHang` (replicate từ NGUON) + `QuanTriLogin` (local). Mọi dữ liệu NhanVien/TaiKhoan/GD được đọc qua Linked Server bằng SP đặc thù.
+
+**Bài học rút ra:**
+> Khi thay đổi article trong Publication (thêm/bỏ bảng), subscription có thể bị lệch metadata. Quy trình an toàn: (1) xóa subscription cũ, (2) sửa publication, (3) tạo snapshot mới, (4) tạo lại subscription. Ngoài ra, Merge Agent chạy dưới service account cần có quyền trên database của Subscriber.
+
+---
+
+## Sự cố 6: Dữ liệu TRACUU (SQL3) không đồng bộ sau khi migration
+
+**Triệu chứng:**
+Sau khi chạy migration đổi MANV trên SQL1+SQL2, trang danh sách nhân viên (nhóm NganHang) vẫn hiển thị `NV01`, `NV02`... thay vì `BT001`, `TD001`. Một số nhân viên mất khỏi danh sách, một số bị trùng hoặc sai chi nhánh.
+
+**Nguyên nhân gốc rễ:**
+SQL3 là **Subscriber** của Replication. Các lệnh `UPDATE NhanVien SET MANV = ...` chạy trực tiếp trên SQL1/SQL2 (Publisher) nhưng **Replication Agent không propagate kịp** (hoặc đã tạm dừng). SQL3 còn giữ snapshot cũ.
+
+Thêm vào đó, dữ liệu demo trên SQL1 và SQL2 dùng **CMND trùng nhau** cho các nhân viên "cùng người" xuất hiện ở cả 2 chi nhánh (ví dụ: BT001 và TD001 cùng CMND `0123456789`). Bảng `NhanVien` trên SQL3 có ràng buộc `UNIQUE KEY` trên `CMND`, nên chỉ lưu được 1 trong 2 → thiếu bản ghi.
+
+**Cách xử lý đã áp dụng:**
+1. Chạy `UPDATE NhanVien SET MANV = 'BTxxx' WHERE RTRIM(MANV) = 'NVxx' AND MACN = 'BENTHANH'` trực tiếp trên SQL3.
+2. Đổi CMND của nhân viên TANDINH sang giá trị khác trên SQL2 (ví dụ `TD001.CMND = '0123456001'` thay vì `'0123456789'`), sau đó INSERT thủ công bản ghi còn thiếu vào SQL3.
+3. UPDATE CMND trên SQL3 để khớp với SQL2.
+
+**Bài học rút ra:**
+> Khi chạy migration data trên Publisher, cần kiểm tra Subscriber ngay sau đó. Nếu Replication chậm hoặc có conflict, cần can thiệp thủ công trên Subscriber. Dữ liệu demo không nên dùng CMND trùng cho các nhân viên khác nhau ở các chi nhánh.

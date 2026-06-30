@@ -18,20 +18,26 @@ Cơ sở dữ liệu được áp dụng kỹ thuật **Phân mảnh ngang (Hori
 
 ### 2.1. Phân mảnh 1: Chi nhánh Bến Thành (SQL1)
 - **Điều kiện Lọc (Filter):** `MACN = 'BENTHANH'`
-- Dữ liệu ở các bảng `KhachHang`, `NhanVien`, `GD_GOIRUT`, `GD_CHUYENTIEN` chỉ chứa các dòng có mã chi nhánh là Bến Thành.
-- Đối với bảng danh mục như `ChiNhanh`, và bảng `TaiKhoan` **[Cập nhật 19/06/2026]**, dữ liệu được nhân bản toàn vẹn (Replicated entirely) để chi nhánh nào cũng truy xuất được ngay tại local.
+- Dữ liệu ở các bảng `KhachHang`, `NhanVien`, `TaiKhoan`, `GD_GOIRUT`, `GD_CHUYENTIEN` chỉ chứa các dòng có mã chi nhánh là Bến Thành — áp dụng **phân mảnh ngang (horizontal fragmentation)** nhất quán theo `MACN`.
+- Bảng `ChiNhanh` được nhân bản toàn vẹn (Replicated entirely) vì là danh mục tham chiếu chỉ đọc, cần thiết cho mọi site.
 
 ### 2.2. Phân mảnh 2: Chi nhánh Tân Định (SQL2)
 - **Điều kiện Lọc (Filter):** `MACN = 'TANDINH'`
-- Tương tự SQL1, phân mảnh này chỉ chứa các dòng dữ liệu mà trường MACN là 'TANDINH'.
+- Tương tự SQL1, phân mảnh này chỉ chứa các dòng dữ liệu mà trường MACN là 'TANDINH' cho tất cả các bảng nghiệp vụ (bao gồm `TaiKhoan`).
 
 ### 2.3. Phân mảnh 3: Trạm Tra Cứu (SQL3)
 - **Chức năng:** Phục vụ nhóm quyền `NganHang` để xem báo cáo toàn hệ thống hoặc tra cứu khách hàng nhanh mà không làm ảnh hưởng đến hiệu năng (Performance) của các máy chủ đang xử lý giao dịch.
 - **Cấu hình:** Phân mảnh này KHÔNG phải là Full Copy của Publisher. Nó **chỉ Replicate Full bảng `KhachHang`** của toàn hệ thống để tối ưu hóa việc tra cứu. Các bảng giao dịch không cần replicate sang đây vì nhóm Ngân Hàng có thể dùng Linked Server gọi ngược lên `NGUON` hoặc chéo sang các mảnh để xem báo cáo.
 
-**[Cập nhật 19/06/2026] Quy tắc đọc/ghi dữ liệu cho bảng nhân bản toàn vẹn (`TaiKhoan`, `ChiNhanh`):**
+> ✅ **[Hiệu chỉnh 30/06/2026]** Xác nhận chính thức: bảng `TaiKhoan` được **nhân bản toàn vẹn (Replicate Full)** — giống bảng `ChiNhanh`. Mỗi site có đầy đủ toàn bộ tài khoản của cả 2 chi nhánh, phục vụ kiểm tra nhanh khi chuyển tiền. Quy tắc: **ĐỌC local, GHI qua Linked Server nếu TK thuộc chi nhánh khác** (phân biệt bằng MACN).
+
+**Quy tắc đọc/ghi dữ liệu cho bảng nhân bản toàn vẹn (`ChiNhanh`):**
 - **Đọc (SELECT):** Đọc trực tiếp tại local (Subscriber) để tăng tốc độ truy vấn, không cần qua Linked Server.
-- **Ghi (INSERT/UPDATE/DELETE):** Chỉ thao tác trên local nếu dữ liệu đó thuộc về chi nhánh hiện tại. Nếu dữ liệu thuộc chi nhánh đối tác (ví dụ: cộng tiền vào tài khoản mở tại chi nhánh khác), **BẮT BUỘC** phải ghi qua Linked Server (`[LINK1]`) để trỏ về bản gốc (Publisher) hoặc site sở hữu dữ liệu đó. TUYỆT ĐỐI không ghi trực tiếp lên bản nhân bản tại Subscriber vì sẽ bị khoá ghi hoặc bị Replication ghi đè (override) ở chu kỳ đồng bộ kế tiếp.
+- **Ghi (INSERT/UPDATE/DELETE):** Chỉ thao tác qua Publisher (NGUON qua `LINK0`). TUYỆT ĐỐI không ghi trực tiếp lên bản nhân bản tại Subscriber vì sẽ bị Replication ghi đè ở chu kỳ đồng bộ kế tiếp.
+
+**Quy tắc đọc/ghi cho `TaiKhoan` (nhân bản toàn vẹn):**
+- **Đọc (SELECT):** Đọc trực tiếp tại local — mọi TK đều có bản copy local, không cần Linked Server.
+- **Ghi (UPDATE số dư):** Chỉ GHI trực tiếp nếu TK có `MACN` = chi nhánh hiện tại (TK "của mình"). Nếu TK thuộc chi nhánh đối tác → bắt buộc GHI qua `[LINK1]` (Linked Server) để cập nhật tại site chủ sở hữu. SP `sp_ChuyenTien` phân biệt bằng cột `MACN`, kích hoạt `BEGIN DISTRIBUTED TRANSACTION` khi cần.
 
 **[Cập nhật Login Management] Bảng Quản Trị Hệ Thống (`QuanTriLogin`):**
 - Bảng này là một ngoại lệ. Nó tồn tại giống nhau trên mọi mảnh (SQL1, SQL2, SQL3) nhưng **KHÔNG tham gia vào Replication**. 
@@ -41,10 +47,40 @@ Cơ sở dữ liệu được áp dụng kỹ thuật **Phân mảnh ngang (Hori
 
 Sau khi chuẩn bị xong, tiến hành cấu hình Merge Replication theo mô hình Publisher - Subscriber.
 
-### 3.1. Article cấu hình cho từng Publication [Cập nhật 19/06/2026]
+### 3.1. Article cấu hình cho từng Publication [Hiệu chỉnh 30/06/2026]
 Kiểu Replicate đã chọn cho Stored Procedures: **"Replicate stored procedure definitions"** (đồng bộ cấu trúc/code), KHÔNG dùng "Replicate as execution".
-- **PUB_BENTHANH và PUB_TANDINH:** Đều add đủ 11 SP nghiệp vụ và quản trị (gồm: `sp_ChuyenNhanVien`, `sp_ChuyenTien`, `sp_GuiTien`, `sp_LietKeKhachHang`, `sp_LietKeTaiKhoanTheoNgay`, `sp_Login_App`, `sp_MoTaiKhoan`, `sp_RutTien`, `SP_SaoKeTaiKhoan`, `SP_TaoTaiKhoan`, `sp_ThemKhachHang`).
-- **PUB_TRACUU:** Chỉ add 2 SP quản trị là `sp_Login_App` và `SP_TaoTaiKhoan`. (Vì TRACUU không có dữ liệu giao dịch local, các SP đọc/báo cáo đặc thù của TRACUU dùng `[LINK1]` + `[LINK2]` được viết tay riêng trên site này, không đưa vào Article).
+- **PUB_BENTHANH và PUB_TANDINH:** Bảng: 6 bảng (ChiNhanh, GD_CHUYENTIEN, GD_GOIRUT, KhachHang, NhanVien, TaiKhoan). SP: 11 SP nghiệp vụ và quản trị.
+- **PUB_TRACUU:** **Chỉ 1 article duy nhất: bảng `KhachHang`** (replicate full toàn bộ KhachHang từ NGUON — không filter theo MACN). TRACUU không cần các bảng giao dịch hay NhanVien/TaiKhoan vì khi cần, SP dùng Linked Server (`LINK1`→SQL1, `LINK2`→SQL2) để lấy. Các SP đặc thù cài thủ công qua `setup_db.js`:
+  - `sp_DanhSachTaiKhoan` — TaiKhoan từ LINK1+LINK2 JOIN KhachHang local
+  - `sp_SaoKeToanBo` — giao dịch từ LINK1+LINK2
+  - `sp_DanhSachNhanVien` — NhanVien từ LINK1+LINK2
+  - `sp_LietKeTaiKhoanTheoNgay` — phiên bản TRACUU đọc TaiKhoan qua LINK
+  - `SP_DanhSachTrangThaiLogin` — phiên bản TRACUU đọc NhanVien qua LINK, KhachHang local
+
+> ⚠️ **Hiện trạng SSMS:** Publication `PUB_TRACUU` hiện đang check tất cả 6 bảng — cần **bỏ check** các bảng ChiNhanh, GD_CHUYENTIEN, GD_GOIRUT, NhanVien, TaiKhoan, chỉ giữ lại KhachHang. Xem hướng dẫn sửa tại mục 3.2.
+
+### 3.2. Hướng dẫn sửa PUB_TRACUU trên SSMS (bỏ article thừa)
+
+**Bước 1:** Trên NGUON (`ES-HAITD16`), mở SSMS → Replication → Local Publications → chuột phải `PUB_TRACUU` → **Properties**.
+
+**Bước 2:** Chọn trang **Articles** (bên trái).
+
+**Bước 3:** Bỏ check tất cả bảng **trừ `KhachHang`**:
+- ❌ ChiNhanh → bỏ check
+- ❌ GD_CHUYENTIEN → bỏ check
+- ❌ GD_GOIRUT → bỏ check
+- ✅ **KhachHang → giữ check**
+- ❌ NhanVien → bỏ check
+- ❌ TaiKhoan → bỏ check
+- ❌ Stored Procedures → bỏ check toàn bộ (SP cài thủ công)
+
+**Bước 4:** Bấm OK → SSMS sẽ cảnh báo "Removing articles..." → xác nhận.
+
+**Bước 5:** Tạo Snapshot mới: chuột phải `PUB_TRACUU` → **Start Snapshot Agent** để đẩy snapshot chỉ có KhachHang xuống SQL3.
+
+**Bước 6:** Kiểm tra trên SQL3 (TRACUU): chỉ còn bảng `KhachHang` có dữ liệu. Các bảng khác (nếu đã sync trước đó) có thể vẫn tồn tại nhưng không còn được Replication đồng bộ — có thể DROP thủ công nếu muốn dọn sạch.
+
+> ⚠️ **Lưu ý:** Sau khi bỏ article, nếu SQL3 đã có dữ liệu ở các bảng bị bỏ, dữ liệu đó sẽ không tự xóa (Replication chỉ ngưng đồng bộ). Xóa thủ công bằng `DROP TABLE` nếu cần.
 
 ## 4. Tự Động Hóa Quá Trình Đồng Bộ Lên Server 3 (TRACUU)
 

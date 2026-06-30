@@ -1,0 +1,53 @@
+USE NGANHANG;
+GO
+
+-- SP chạy trên TRACUU: tổng hợp toàn bộ giao dịch (GD_GOIRUT + GD_CHUYENTIEN)
+-- từ cả 2 chi nhánh trong một khoảng thời gian, không lọc theo SOTK cụ thể.
+-- Thay thế 3 query rời + merge ở tầng Node.js cho NganHang xem sao kê tổng.
+CREATE OR ALTER PROCEDURE sp_SaoKeToanBo
+    @TUNGAY datetime,
+    @DENNGAY datetime
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- GD_GOIRUT từ cả 2 chi nhánh
+    SELECT RTRIM(g.SOTK) AS SOTK, g.NGAYGD, g.LOAIGD, g.SOTIEN
+    FROM [LINK1].NGANHANG.dbo.GD_GOIRUT g
+    WHERE g.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+
+    UNION ALL
+
+    SELECT RTRIM(g.SOTK), g.NGAYGD, g.LOAIGD, g.SOTIEN
+    FROM [LINK2].NGANHANG.dbo.GD_GOIRUT g
+    WHERE g.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+
+    -- GD_CHUYENTIEN từ site BENTHANH (cả bên chuyển lẫn bên nhận)
+    UNION ALL
+
+    SELECT RTRIM(c.SOTK_CHUYEN), c.NGAYGD, 'CT', c.SOTIEN
+    FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN c
+    WHERE c.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+
+    UNION ALL
+
+    SELECT RTRIM(c.SOTK_NHAN), c.NGAYGD, 'NT', c.SOTIEN
+    FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN c
+    WHERE c.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+
+    -- GD_CHUYENTIEN từ site TANDINH (cả bên chuyển lẫn bên nhận)
+    UNION ALL
+
+    SELECT RTRIM(c.SOTK_CHUYEN), c.NGAYGD, 'CT', c.SOTIEN
+    FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN c
+    WHERE c.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+
+    UNION ALL
+
+    SELECT RTRIM(c.SOTK_NHAN), c.NGAYGD, 'NT', c.SOTIEN
+    FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN c
+    WHERE c.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+
+    ORDER BY NGAYGD;
+END
+GO

@@ -26,6 +26,10 @@
     </div>
     <% } %>
     <div class="form-group">
+      <label>Tìm kiếm</label>
+      <input type="text" name="search" placeholder="Tên hoặc CMND..." value="<%= query.search||'' %>" style="min-width:200px;">
+    </div>
+    <div class="form-group">
       <button type="submit" class="btn btn-primary">Xem</button>
     </div>
   </form>

@@ -128,15 +128,23 @@ const serverAddresses = {
 
 // Dùng sqlcmd (native SQL Server CLI) cho SP có MSDTC distributed transaction.
 // tedious driver không hỗ trợ distributed tran, sqlcmd dùng native client nên OK.
+//
+// Bảo mật: SQL template (chuỗi -Q) chỉ chứa placeholder $(VarName) — không nhúng giá trị.
+// Giá trị truyền qua -v (channel riêng), tránh shell injection hoàn toàn.
+// ' vẫn được escape thành '' trong giá trị để ngăn SQL string literal breakage.
 async function execSPAdmin(serverKey, spName, params = {}) {
   const serverAddr = serverAddresses[serverKey];
   if (!serverAddr) throw new Error(`Không tìm thấy server: ${serverKey}`);
 
-  // Build câu EXEC với tham số
-  const paramStr = Object.entries(params)
-    .map(([k, v]) => `@${k}=N'${String(v).replace(/'/g, "''")}'`)
+  // SQL template tĩnh: chỉ tên SP + placeholder $(VarName) — không có user data
+  const paramStr = Object.keys(params)
+    .map(k => `@${k}=N'$(${k})'`)
     .join(', ');
   const query = `EXEC ${spName} ${paramStr}`;
+
+  // Giá trị đi qua -v args (tách biệt khỏi SQL template), vẫn escape ' → ''
+  const vArgs = Object.entries(params)
+    .flatMap(([k, v]) => ['-v', `${k}=${String(v).replace(/'/g, "''")}`]);
 
   return new Promise((resolve, reject) => {
     execFile('sqlcmd', [
@@ -144,6 +152,7 @@ async function execSPAdmin(serverKey, spName, params = {}) {
       '-d', 'NGANHANG',
       '-U', 'HTKN',
       '-P', '123',
+      ...vArgs,
       '-Q', query,
       '-b'   // exit với error code nếu SQL lỗi
     ], (error, stdout, stderr) => {

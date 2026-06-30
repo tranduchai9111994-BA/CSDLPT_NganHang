@@ -1,19 +1,23 @@
 // routes/taikhoan.js
 const express = require('express');
 const router  = express.Router();
-const { querySQL, execSP } = require('../db');
+const { querySQL, execSP, querySP } = require('../db');
 
 function getServer(req) { return req.session.user.SERVER || 'BENTHANH'; }
 
-// Sinh số TK tự động: TK + 7 chữ số
-async function sinhSOTK(req, serverKey) {
+// Tiền tố SOTK theo chi nhánh — đảm bảo không trùng khóa khi đồng bộ liên site
+const MACN_PREFIX = { BENTHANH: 'BT', TANDINH: 'TD' };
+
+// Sinh số TK tự động: <prefix_chinhanh> + 7 chữ số (ví dụ BT0000001, TD0000001)
+async function sinhSOTK(req, serverKey, macn) {
+  const prefix = MACN_PREFIX[macn] || 'TK';
   const rows = await querySQL(req, serverKey, `
-    SELECT TOP 1 SOTK FROM TaiKhoan ORDER BY SOTK DESC
-  `);
-  if (rows.length === 0) return 'TK0000001';
+    SELECT TOP 1 SOTK FROM TaiKhoan WHERE SOTK LIKE @prefix ORDER BY SOTK DESC
+  `, { prefix: prefix + '%' });
+  if (rows.length === 0) return prefix + '0000001';
   const last = rows[0].SOTK.trim();
-  const num  = parseInt(last.replace('TK', '')) + 1;
-  return 'TK' + String(num).padStart(7, '0');
+  const num  = parseInt(last.slice(prefix.length)) + 1;
+  return prefix + String(num).padStart(7, '0');
 }
 
 // GET /taikhoan – Danh sách tài khoản
@@ -24,27 +28,9 @@ router.get('/', async (req, res) => {
     let sql;
     let params = {};
     if (user.NHOM === 'NganHang') {
-      // Lấy tất cả TaiKhoan từ 1 server (dữ liệu replicate đồng bộ)
-      const tkRows = await querySQL(req, 'BENTHANH', `
-        SELECT RTRIM(SOTK) AS SOTK, RTRIM(CMND) AS CMND,
-               SODU, RTRIM(MACN) AS MACN,
-               CONVERT(varchar,NGAYMOTK,103) AS NGAYMOTK
-        FROM TaiKhoan ORDER BY NGAYMOTK DESC
-      `);
-
-      // Tra cứu KhachHang theo đúng server của từng chi nhánh
-      const [khBT, khTD] = await Promise.all([
-        querySQL(req, 'BENTHANH', `SELECT RTRIM(CMND) AS CMND, RTRIM(HO)+' '+RTRIM(TEN) AS HoTen FROM KhachHang`),
-        querySQL(req, 'TANDINH',  `SELECT RTRIM(CMND) AS CMND, RTRIM(HO)+' '+RTRIM(TEN) AS HoTen FROM KhachHang`)
-      ]);
-      const khMap = {};
-      for (const kh of khBT) khMap[`BENTHANH_${kh.CMND}`] = kh.HoTen;
-      for (const kh of khTD) khMap[`TANDINH_${kh.CMND}`]  = kh.HoTen;
-
-      const rows = tkRows.map(tk => ({
-        ...tk,
-        HoTen: khMap[`${tk.MACN}_${tk.CMND}`] || null
-      }));
+      // sp_DanhSachTaiKhoan chạy trên TRACUU, gộp TaiKhoan từ cả 2 chi nhánh qua LINK1+LINK2
+      // và JOIN KhachHang local (TRACUU replicate full KhachHang) — không cần fan-out ở Node
+      const rows = await querySP(req, 'TRACUU', 'sp_DanhSachTaiKhoan', {});
       return res.render('taikhoan/list', { rows, error: req.query.error || null, success: req.query.success || null });
     } else if (user.NHOM === 'ChiNhanh') {
       sql = `
@@ -59,16 +45,9 @@ router.get('/', async (req, res) => {
       `;
       params = { macn: user.MACN };
     } else {
-      // KhachHang chỉ xem TK của mình
-      sql = `
-        SELECT RTRIM(tk.SOTK) AS SOTK, RTRIM(tk.CMND) AS CMND,
-               tk.SODU, RTRIM(tk.MACN) AS MACN,
-               CONVERT(varchar,tk.NGAYMOTK,103) AS NGAYMOTK
-        FROM TaiKhoan tk
-        WHERE RTRIM(tk.CMND) = @cmnd
-        ORDER BY tk.NGAYMOTK DESC
-      `;
-      params = { cmnd: user.MANV };
+      // KhachHang: dùng SP để tránh raw SELECT trực tiếp (KhachHang không có GRANT SELECT trên TaiKhoan)
+      const rows = await querySP(req, server, 'sp_TaiKhoanKhachHang', { CMND: user.MANV });
+      return res.render('taikhoan/list', { rows, error: req.query.error || null, success: req.query.success || null });
     }
     const rows = await querySQL(req, server, sql, params);
     res.render('taikhoan/list', { rows, error: req.query.error || null, success: req.query.success || null });
@@ -85,7 +64,7 @@ router.get('/mo', async (req, res) => {
     return res.status(403).render('error', { message: 'Không có quyền.', layout: false });
   }
   try {
-    const sotk = await sinhSOTK(req, server);
+    const sotk = await sinhSOTK(req, server, user.MACN);
     // Lấy danh sách KH để chọn
     const khRows = await querySQL(req, server, `
       SELECT RTRIM(CMND) AS CMND, RTRIM(HO)+' '+RTRIM(TEN) AS HoTen
@@ -109,7 +88,7 @@ router.post('/mo', async (req, res) => {
   let { SOTK, CMND, SODU, MACN } = req.body;
   try {
     if (!SOTK) {
-      SOTK = await sinhSOTK(req, server);
+      SOTK = await sinhSOTK(req, server, MACN);
     }
     await execSP(req, server, 'sp_MoTaiKhoan', {
       SOTK, CMND, SODU: parseFloat(SODU) || 0, MACN

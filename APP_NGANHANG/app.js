@@ -66,9 +66,9 @@ const quantriRoutes   = require('./routes/quantri');
 app.use('/', authRoutes);
 app.use('/quantri',   requireLogin, requireRole('NganHang', 'ChiNhanh'), quantriRoutes);
 app.use('/khachhang', requireLogin, requireRole('NganHang', 'ChiNhanh'), khachHangRoutes);
-app.use('/taikhoan',  requireLogin, taiKhoanRoutes);
+app.use('/taikhoan',  requireLogin, requireRole('NganHang', 'ChiNhanh', 'KhachHang'), taiKhoanRoutes);
 app.use('/giaodich',  requireLogin, requireRole('NganHang', 'ChiNhanh'), giaoDichRoutes);
-app.use('/baocao',    requireLogin, baoCaoRoutes);
+app.use('/baocao',    requireLogin, requireRole('NganHang', 'ChiNhanh', 'KhachHang'), baoCaoRoutes);
 app.use('/nhanvien',  requireLogin, requireRole('NganHang', 'ChiNhanh'), nhanVienRoutes);
 
 // Trang chủ

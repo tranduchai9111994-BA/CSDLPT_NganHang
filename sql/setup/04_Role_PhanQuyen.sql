@@ -40,5 +40,8 @@ GO
 -- ==============================================================================
 -- 5. PHÂN QUYỀN CHO ROLE KhachHang
 -- ==============================================================================
-GRANT EXECUTE ON SP_SaoKeTaiKhoan TO KhachHang;
+-- Chỉ cấp EXECUTE trên SP — KhachHang không có SELECT trực tiếp trên bất kỳ bảng nào.
+-- SP kiểm soát điều kiện lọc (WHERE CMND = @CMND), đảm bảo KhachHang chỉ thấy dữ liệu của mình.
+GRANT EXECUTE ON sp_TaiKhoanKhachHang TO KhachHang;  -- danh sách TK của tôi
+GRANT EXECUTE ON SP_SaoKeTaiKhoan TO KhachHang;       -- sao kê chi tiết 1 TK
 GO

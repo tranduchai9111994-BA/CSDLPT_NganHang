@@ -1,46 +1,26 @@
-<h1><%= action === 'them' ? '➕ Thêm khách hàng mới' : '✏️ Sửa thông tin khách hàng' %></h1>
+<h1><%= action === 'them' ? '+ Thêm khách hàng mới' : 'Sửa thông tin khách hàng' %></h1>
 
 <% if (error) { %>
-  <div class="alert alert-error">❌ <%= error %></div>
+  <div class="alert alert-error"><%= error %></div>
 <% } %>
 
 <div class="form-card">
-  <form method="POST" action="/khachhang/<%= action %>">
-    <% if (action === 'sua' && kh) { %>
-      <input type="hidden" name="CMND" value="<%= kh.CMND.trim ? kh.CMND.trim() : kh.CMND %>">
-      <div class="form-group">
-        <label>CMND (không thể sửa)</label>
-        <input type="text" value="<%= kh.CMND.trim ? kh.CMND.trim() : kh.CMND %>" disabled>
-      </div>
-    <% } else { %>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <div class="form-group">
-          <label>CMND *</label>
-          <input type="text" name="CMND" maxlength="10" required
-                 value="<%= kh ? kh.CMND : '' %>" placeholder="10 ký tự số">
-        </div>
-        <div class="form-group">
-          <label>Mã PIN (Mật khẩu) *</label>
-          <input type="password" name="MACPIN" maxlength="10" required
-                 placeholder="Dùng để đăng nhập">
-        </div>
-      </div>
-    <% } %>
+  <form method="POST" action="/khachhang/<%= action %>" autocomplete="off">
 
     <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;">
       <div class="form-group">
         <label>Họ *</label>
-        <input type="text" name="HO" required value="<%= kh ? kh.HO : '' %>">
+        <input type="text" name="HO" required value="<%= kh ? kh.HO : '' %>" autocomplete="off">
       </div>
       <div class="form-group">
         <label>Tên *</label>
-        <input type="text" name="TEN" required value="<%= kh ? kh.TEN : '' %>">
+        <input type="text" name="TEN" required value="<%= kh ? kh.TEN : '' %>" autocomplete="off">
       </div>
     </div>
 
     <div class="form-group">
       <label>Địa chỉ</label>
-      <input type="text" name="DIACHI" value="<%= kh ? kh.DIACHI || '' : '' %>">
+      <input type="text" name="DIACHI" value="<%= kh ? kh.DIACHI || '' : '' %>" autocomplete="off">
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
@@ -59,8 +39,37 @@
 
     <div class="form-group">
       <label>Số điện thoại *</label>
-      <input type="text" name="SODT" required value="<%= kh ? kh.SODT : '' %>">
+      <input type="text" name="SODT" required value="<%= kh ? kh.SODT : '' %>" autocomplete="off">
     </div>
+
+    <% if (action === 'sua' && kh) { %>
+      <input type="hidden" name="CMND" value="<%= kh.CMND.trim ? kh.CMND.trim() : kh.CMND %>">
+      <div class="form-group">
+        <label>CMND (không thể sửa)</label>
+        <input type="text" value="<%= kh.CMND.trim ? kh.CMND.trim() : kh.CMND %>" disabled>
+      </div>
+    <% } else { %>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="form-group">
+          <label>CMND *</label>
+          <input type="text" name="CMND" maxlength="10" required
+                 value="" autocomplete="off" placeholder="">
+        </div>
+        <div class="form-group">
+          <label>Mã PIN (Mật khẩu) *</label>
+          <div style="position:relative;">
+            <input type="password" id="macpin-input" name="MACPIN" maxlength="10" required
+                   autocomplete="new-password" placeholder=""
+                   style="width:100%;padding-right:36px;box-sizing:border-box;">
+            <button type="button" onclick="togglePin()" title="Hiện/ẩn mật khẩu"
+                    style="position:absolute;right:8px;top:50%;transform:translateY(-50%);
+                           background:none;border:none;cursor:pointer;padding:0;color:#555;font-size:16px;">
+              <span id="pin-eye">👁</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    <% } %>
 
     <input type="hidden" name="MACN" value="<%= macn %>">
 
@@ -73,3 +82,17 @@
     </div>
   </form>
 </div>
+
+<script>
+function togglePin() {
+  const input = document.getElementById('macpin-input');
+  const eye   = document.getElementById('pin-eye');
+  if (input.type === 'password') {
+    input.type = 'text';
+    eye.textContent = '🙈';
+  } else {
+    input.type = 'password';
+    eye.textContent = '👁';
+  }
+}
+</script>

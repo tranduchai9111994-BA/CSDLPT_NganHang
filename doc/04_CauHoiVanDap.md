@@ -17,12 +17,21 @@ Chọn phân mảnh ngang vì nghiệp vụ ngân hàng phân chia theo chi nhá
 
 **Trả lời:** 
 - **Phân mảnh ngang:** KhachHang, NhanVien, GD_GOIRUT, GD_CHUYENTIEN — đều theo MACN.
-- **Nhân bản toàn vẹn (Replicate Full):** ChiNhanh (vì mỗi chi nhánh cần biết danh sách tất cả các chi nhánh) và TaiKhoan **[Cập nhật 19/06/2026]**.
+- **Nhân bản toàn vẹn (Replicate Full):** `ChiNhanh` (danh mục tham chiếu) và `TaiKhoan` (để mỗi site có thể kiểm tra sự tồn tại TK đích ngay local khi chuyển tiền, không cần gọi Linked Server để SELECT).
 - **Trường hợp đặc biệt:** KhachHang được replicate full sang TRACUU (SQL3) để phục vụ tra cứu toàn cục.
 
-### 1.3. Tại sao TaiKhoan lại nhân bản thay vì phân mảnh như KhachHang/NhanVien? [Cập nhật 19/06/2026]
+### 1.3. Tại sao TaiKhoan lại nhân bản toàn vẹn thay vì phân mảnh như KhachHang/NhanVien?
 
-**Trả lời:** Việc nhân bản toàn vẹn `TaiKhoan` cho phép các Stored Procedure kiểm tra sự tồn tại của tài khoản đích (khi chuyển tiền khác chi nhánh) ngay tại local mà không cần gọi Linked Server để SELECT, giúp giảm tải mạng đáng kể. Chỉ khi GHI (UPDATE số dư) vào tài khoản không thuộc site đó mới bắt buộc qua Linked Server (`[LINK1]`) để cập nhật vào bản gốc tại site sở hữu.
+**Trả lời:** Nhân bản toàn vẹn `TaiKhoan` mang lại 2 lợi ích:
+
+1. **Kiểm tra nhanh khi chuyển tiền:** SP `sp_ChuyenTien` cần xác minh TK nhận có tồn tại hay không. Nếu TaiKhoan được replicate full, mọi TK đều có bản copy local → SELECT kiểm tra không cần qua Linked Server → nhanh.
+2. **Tra cứu linh hoạt:** Nhân viên có thể xem thông tin bất kỳ TK nào trong hệ thống từ site local.
+
+**Quy tắc ĐỌC/GHI cho bảng nhân bản:**
+- **Đọc:** Đọc local (nhanh, không tốn mạng).
+- **Ghi:** Chỉ ghi tại **site sở hữu** (site có MACN trùng với MACN của TK đó). Nếu TK thuộc chi nhánh khác → GHI qua `[LINK1]` (Linked Server) để cập nhật vào site chủ sở hữu, Replication sẽ đồng bộ ngược lại.
+
+**SP phải phân biệt bằng MACN, không bằng EXISTS:** Vì TK luôn tồn tại local (do replicate), SP `sp_ChuyenTien` kiểm tra `MACN` của TK nhận so với MACN chi nhánh hiện tại để quyết định ghi local hay qua LINK1.
 
 ### 1.4. Bảng GD_GOIRUT và GD_CHUYENTIEN không có cột MACN, vậy phân mảnh theo gì?
 
@@ -32,13 +41,13 @@ Chọn phân mảnh ngang vì nghiệp vụ ngân hàng phân chia theo chi nhá
 
 Việc thêm MACN vào bảng giao dịch là **sai thiết kế** vì tạo dư thừa dữ liệu (data redundancy).
 
-### 1.4. Trạm TRACUU chứa những gì? Tại sao chỉ chứa bảng KhachHang?
+### 1.5. Trạm TRACUU chứa những gì? Tại sao chỉ chứa bảng KhachHang?
 
 **Trả lời:** TRACUU chỉ replicate full bảng KhachHang của cả 2 chi nhánh. Không chứa bảng giao dịch.
 
 Lý do: TRACUU phục vụ nhóm NganHang (Ban Giám Đốc) để tra cứu nhanh khách hàng mà không làm ảnh hưởng hiệu năng của server đang xử lý giao dịch. Khi NganHang cần xem giao dịch, sẽ dùng Linked Server gọi sang SQL1/SQL2 thay vì lưu copy giao dịch ở TRACUU.
 
-### 1.5. Phân mảnh ngang khác phân mảnh dọc ở điểm nào?
+### 1.6. Phân mảnh ngang khác phân mảnh dọc ở điểm nào?
 
 **Trả lời:** 
 - **Phân mảnh ngang:** Chia theo hàng (dòng). Mỗi mảnh chứa một tập con các dòng. Cấu trúc cột giống nhau. → Hệ thống em dùng kiểu này.
@@ -46,14 +55,14 @@ Lý do: TRACUU phục vụ nhóm NganHang (Ban Giám Đốc) để tra cứu nha
 
 Đề bài này phù hợp phân mảnh ngang vì tất cả chi nhánh cần cùng cấu trúc bảng, chỉ khác tập dữ liệu.
 
-### 1.6. Làm sao đảm bảo tính toàn vẹn khi dữ liệu nằm ở nhiều server?
+### 1.7. Làm sao đảm bảo tính toàn vẹn khi dữ liệu nằm ở nhiều server?
 
 **Trả lời:** Qua 3 cơ chế:
 1. **Replication** đồng bộ dữ liệu giữa NGUON và các mảnh (đảm bảo dữ liệu nhất quán).
 2. **Distributed Transaction + MSDTC** cho các thao tác liên chi nhánh (đảm bảo ACID).
 3. **Ràng buộc CHECK tại mỗi mảnh** (ví dụ: `SODU >= 0` trên bảng TaiKhoan).
 
-### 1.7. Nếu thêm chi nhánh thứ 3 thì cần làm gì?
+### 1.8. Nếu thêm chi nhánh thứ 3 thì cần làm gì?
 
 **Trả lời:** Cần:
 1. Tạo thêm SQL Server instance mới (ví dụ SQL4).
@@ -215,6 +224,22 @@ Giải pháp: SQL Server cấp cho mỗi Subscriber một dải ID riêng. Ví d
 
 **Trả lời:** Chỉ được sửa tại **Publisher (NGUON)**, rồi để Replication tự đẩy xuống Subscriber. Không được ALTER trực tiếp tại Subscriber vì Replication sẽ khóa lệnh DDL để tránh lệch pha cấu trúc giữa Publisher và Subscriber.
 
+### 5.6. PUB_TRACUU chỉ có 1 article là KhachHang. Vậy TRACUU lấy NhanVien và TaiKhoan ở đâu? [Cập nhật 30/06/2026]
+
+**Trả lời:** TRACUU (SQL3) chỉ replicate bảng `KhachHang` để phục vụ tra cứu khách hàng toàn hệ thống. Các bảng `NhanVien`, `TaiKhoan`, `GD_GOIRUT`, `GD_CHUYENTIEN` **không có trên SQL3**.
+
+Khi cần dữ liệu đó, SQL3 dùng **SP đặc thù đọc qua Linked Server**:
+- `sp_DanhSachNhanVien` — UNION ALL từ `[LINK1].NGANHANG.dbo.NhanVien` + `[LINK2].NGANHANG.dbo.NhanVien`
+- `sp_LietKeTaiKhoanTheoNgay` — TaiKhoan qua LINK1+LINK2, JOIN KhachHang local
+- `SP_DanhSachTrangThaiLogin` — NhanVien qua LINK, KhachHang+QuanTriLogin local
+- `sp_DanhSachTaiKhoan`, `sp_SaoKeToanBo` — TaiKhoan/GD qua LINK1+LINK2
+
+Ưu điểm: dữ liệu **realtime** (không bị trễ Replication), TRACUU nhẹ (chỉ lưu KhachHang), phù hợp vai trò "trạm tra cứu".
+
+### 5.7. Sau khi sửa PUB_TRACUU, các bảng cũ trên SQL3 có tự xóa không?
+
+**Trả lời:** **KHÔNG.** Replication chỉ ngưng đồng bộ, không tự xóa bảng/dữ liệu cũ trên Subscriber. Phải DROP thủ công. Ngoài ra, subscription metadata cũ có thể bị lệch → cần `sp_removedbreplication` để dọn, rồi tạo lại subscription mới.
+
 ---
 
 ## CỤM 6: PHÂN QUYỀN (5 câu)
@@ -302,7 +327,7 @@ SP chạy với `EXECUTE AS OWNER` để có đủ quyền tạo login (vì user
 
 ### 8.1. Nếu 2 nhân viên ở 2 chi nhánh cùng lúc rút tiền từ cùng 1 tài khoản thì sao?
 
-**Trả lời:** Tình huống này không xảy ra vì 1 TK chỉ nằm ở 1 chi nhánh (phân mảnh ngang). NV ở chi nhánh kia không thấy TK đó trong danh sách. Nếu muốn rút từ TK ở chi nhánh khác, phải qua chuyển tiền (Distributed Transaction xử lý).
+**Trả lời:** Tình huống này không xảy ra trong thực tế vì giao diện chỉ cho NV thấy TK có `MACN` = chi nhánh mình (route filter `WHERE MACN = @macn`). Dù TaiKhoan được nhân bản toàn vẹn (NV có thể thấy TK đối tác ở tầng DB), ứng dụng chỉ hiển thị TK cùng chi nhánh cho chức năng gửi/rút. Nếu muốn thao tác TK ở chi nhánh khác, phải qua chuyển tiền (Distributed Transaction xử lý).
 
 ### 8.2. Tại sao không dùng 1 server tập trung cho đơn giản?
 

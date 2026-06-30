@@ -20,10 +20,12 @@
 
 | Mục đích | Login | Password | Server | Ghi chú |
 |---|---|---|---|---|
-| Demo nhóm ChiNhanh (BT) | NV01 | 123456 | BENTHANH | Giao dịch viên Bến Thành |
-| Demo nhóm ChiNhanh (TD) | NV03 | 123456 | TANDINH | Giao dịch viên Tân Định |
-| Demo nhóm NganHang | admin | admin | TRACUU | Ban Giám Đốc |
-| Demo nhóm KhachHang | (CMND KH mẫu) | 123456 | BENTHANH/TANDINH | Khách hàng |
+| Demo nhóm ChiNhanh (BT) | `BT001` | `1` | BENTHANH | Giao dịch viên Bến Thành |
+| Demo nhóm ChiNhanh (TD) | `TD001` | `1` | TANDINH | Giao dịch viên Tân Định |
+| Demo nhóm NganHang | `admin` | `1` | TRACUU | Ban Giám Đốc |
+| Demo nhóm KhachHang | (CMND KH mẫu) | (PIN tự đặt) | BENTHANH/TANDINH | Khách hàng |
+
+> **Lưu ý:** LoginName = MANV (ví dụ `BT001` cho nhân viên Bến Thành #1, `TD002` cho Tân Định #2). Toàn bộ tài khoản demo dùng mật khẩu `1` — xem danh sách đầy đủ tại [`03_DemoAccounts.md`](03_DemoAccounts.md).
 
 > ⚠️ **CẬP NHẬT:** Trước khi demo, mở SSMS kiểm tra SOTK và CMND mẫu thực tế trong DB.  
 > Ghi lại vào bảng này: SOTK_BT = _______, SOTK_TD = _______, CMND_KH = _______
@@ -44,7 +46,7 @@
 
 **Thao tác:**
 1. Mở `http://localhost:3000/login`
-2. Nhập: Username = `NV01`, Password = `123456`, Chi nhánh = `BENTHANH`
+2. Nhập: Username = `BT001`, Password = `1`, Chi nhánh = `BENTHANH`
 3. Bấm Đăng nhập
 
 **Nói:** "Đăng nhập bằng SQL Authentication thật — hệ thống tạo connection pool trực tiếp bằng login/password của nhân viên, không dùng tài khoản hệ thống trung gian."
@@ -134,7 +136,7 @@
 
 **Thao tác:**
 1. Đăng xuất
-2. Login: `admin` / `admin` / Chi nhánh: `TRACUU`
+2. Login: `admin` / `1` / Chi nhánh: `TRACUU`
 
 **Nói:** "Nhóm NganHang đăng nhập vào server TRACUU. Họ có thể chọn bất kỳ chi nhánh nào để xem báo cáo nhưng không được thêm/sửa/xóa dữ liệu."
 
@@ -180,7 +182,7 @@
 ### Phần 11 (Bonus): Chuyển nhân viên (1 phút — nếu còn thời gian)
 
 **Thao tác:**
-1. Login lại NV01 ở BENTHANH
+1. Login lại `BT001` ở BENTHANH
 2. Vào **Nhân viên** → chọn 1 NV → bấm **Chuyển chi nhánh**
 3. Chọn chi nhánh mới: TANDINH
 

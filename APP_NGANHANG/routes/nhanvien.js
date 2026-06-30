@@ -1,7 +1,7 @@
 // routes/nhanvien.js
 const express = require('express');
 const router = express.Router();
-const { querySQL, execSP, execSPAdmin } = require('../db');
+const { querySQL, execSP, execSPAdmin, querySP } = require('../db');
 
 function getServer(req) {
   return req.session.user.SERVER || 'BENTHANH';
@@ -14,14 +14,8 @@ router.get('/', async (req, res) => {
   try {
     let rows;
     if (user.NHOM === 'NganHang') {
-      rows = await querySQL(req, 'TRACUU', `
-        SELECT RTRIM(MANV) AS MANV,
-               RTRIM(HO) + ' ' + RTRIM(TEN) AS HoTen,
-               RTRIM(CMND) AS CMND,
-               RTRIM(MACN) AS MACN, SODT, DIACHI, TrangThaiXoa
-        FROM NhanVien
-        ORDER BY MACN, HO, TEN
-      `);
+      // TRACUU không có NhanVien local → SP đọc qua LINK1+LINK2
+      rows = await querySP(req, 'TRACUU', 'sp_DanhSachNhanVien', {});
     } else {
       rows = await querySQL(req, server, `
         SELECT RTRIM(MANV) AS MANV,
@@ -40,6 +34,8 @@ router.get('/', async (req, res) => {
 });
 
 // Sinh mã NV tự động theo prefix chi nhánh: BT001, TD001, ...
+// Query trên chính server đích — SP_ChuyenNhanVien cũng dùng cùng logic phía SQL
+// nên không cần cross-check thêm tại đây (SP đã có vòng lặp tránh race condition).
 async function sinhMANV(req, server, macn) {
   const prefix = macn === 'BENTHANH' ? 'BT' : 'TD';
   const rows = await querySQL(req, server, `
@@ -49,8 +45,9 @@ async function sinhMANV(req, server, macn) {
   `, { prefix });
   if (rows.length === 0) return prefix + '001';
   const last = rows[0].MANV;
-  const num = parseInt(last.replace(prefix, '')) + 1;
-  return prefix + String(num).padStart(3, '0');
+  const numStr = last.slice(prefix.length);
+  const num = parseInt(numStr, 10);
+  return prefix + String(isNaN(num) ? 1 : num + 1).padStart(3, '0');
 }
 
 // GET /nhanvien/them - Form thêm mới

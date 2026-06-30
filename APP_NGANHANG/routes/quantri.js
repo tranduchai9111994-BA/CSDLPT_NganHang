@@ -1,7 +1,7 @@
 // routes/quantri.js
 const express = require('express');
 const router = express.Router();
-const { getPool, getAdminPool, sql } = require('../db');
+const { getPool, getAdminPool, querySP, sql } = require('../db');
 
 // Hàm phụ trợ lấy danh sách nhân viên
 const requireNganHang = (req, res, next) => {
@@ -14,19 +14,16 @@ const requireNganHang = (req, res, next) => {
 async function getNhanVienList(req) {
   try {
     const sessionUser = req.session.user;
-    // NganHang query TRACUU để thấy NV tất cả chi nhánh
-    const serverKey = sessionUser.NHOM === 'NganHang' ? 'TRACUU' : sessionUser.SERVER;
-    const pool = await getPool(req, serverKey);
-
-    let query, result;
     if (sessionUser.NHOM === 'NganHang') {
-      query = `SELECT MANV, HO, TEN, RTRIM(MACN) AS MACN FROM NhanVien WHERE TrangThaiXoa = 0 ORDER BY MACN, MANV`;
-      result = await pool.request().query(query);
-    } else {
-      const macn = sessionUser.MACN ? sessionUser.MACN.trim() : '';
-      query = `SELECT MANV, HO, TEN FROM NhanVien WHERE RTRIM(MACN) = RTRIM(@macn) AND TrangThaiXoa = 0`;
-      result = await pool.request().input('macn', sql.NVarChar, macn).query(query);
+      // TRACUU không có NhanVien local → SP đọc qua LINK1+LINK2
+      const rows = await querySP(req, 'TRACUU', 'sp_DanhSachNhanVien', {});
+      return rows.filter(r => !r.TrangThaiXoa);
     }
+    const serverKey = sessionUser.SERVER;
+    const pool = await getPool(req, serverKey);
+    const macn = sessionUser.MACN ? sessionUser.MACN.trim() : '';
+    const query = `SELECT MANV, HO, TEN FROM NhanVien WHERE RTRIM(MACN) = RTRIM(@macn) AND TrangThaiXoa = 0`;
+    const result = await pool.request().input('macn', sql.NVarChar, macn).query(query);
     return result.recordset || [];
   } catch (e) {
     console.error("Lỗi khi load danh sách nhân viên:", e);
@@ -146,6 +143,13 @@ router.post('/taotaikhoan', async (req, res) => {
       }
     }
 
+    if (errors.length > 0) {
+      return res.render('taotaikhoan', {
+        error: `Cấp tài khoản một phần — lỗi tại: ${errors.join('; ')}. Vui lòng dùng chức năng Dọn Lỗi Đồng Bộ để kiểm tra và tạo lại.`,
+        success: null,
+        nhanviens, khachhangs, user: sessionUser
+      });
+    }
     return res.render('taotaikhoan', {
       error: null,
       success: `Tạo tài khoản thành công cho "${username}" với quyền ${role}.`,

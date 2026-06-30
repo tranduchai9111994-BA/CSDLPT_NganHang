@@ -2,6 +2,8 @@
 
 Tất cả các chức năng nghiệp vụ được tách ra thành từng file riêng trong thư mục `routes/` để dễ bảo trì.
 
+> 📌 **Liên quan phân tán:** Một số module (`taikhoan.js` tổng hợp TK cho NganHang, `baocao.js` sao kê không chọn TK, fan-out cấp Login trong `quantri.js`/`khachhang.js`) đang xử lý **tổng hợp/điều phối xuyên mảnh tại tầng Node** thay vì bằng SP + Linked Server. Đánh giá chi tiết và khuyến nghị: [`18_DanhGia_CoChePhanTan.md`](18_DanhGia_CoChePhanTan.md) mục #4.
+
 ## 1. `auth.js` (Xác thực)
 - Xử lý đăng nhập. Xác định user thuộc nhóm nào bằng cách truy vấn View hệ thống (`sys.database_role_members`) hoặc kiểm tra tài khoản NV/KH.
 - Gọi SP `sp_Login_App`.
@@ -11,10 +13,12 @@ Tất cả các chức năng nghiệp vụ được tách ra thành từng file 
 - CRUD (Create, Read, Update, Delete). Giao diện tuân thủ đầy đủ các nút chức năng: Thêm, Xóa, Phục hồi (Reset Form / Hủy trạng thái xóa), Ghi, Thoát.
 - Nếu nhóm là `NganHang`, kết nối tới Server `TRACUU` để lấy toàn bộ. Nếu là `ChiNhanh`, kết nối Server cục bộ để lấy dữ liệu chi nhánh mình.
 - Gọi SP `sp_ThemKhachHang` để thêm mới.
+- **Form thêm mới (views/khachhang/form.ejs):** Thứ tự trường được tối ưu — Họ/Tên → Địa chỉ → Giới tính/Ngày cấp → SĐT → CMND/Mã PIN (ở dưới cùng). CMND để trống không có placeholder tránh browser autocomplete nhầm. Ô Mã PIN có nút mắt 👁 để hiện/ẩn ký tự. Toàn form dùng `autocomplete="off"`.
 
 ## 3. `nhanvien.js` (Quản lý Nhân Viên)
 - Hoạt động tương tự `khachhang.js`. Giao diện tuân thủ đầy đủ các nút chức năng: Thêm, Xóa, Phục hồi (Reset Form / Hủy trạng thái xóa), Ghi, Thoát.
-- **Tính năng Thêm Mới:** Tự động sinh Mã Nhân Viên (`MANV`) theo định dạng chi nhánh (VD: `BT001`, `TD001`) thay vì bắt người dùng nhập tay, giảm thiểu sai sót.
+- **[Cập nhật 30/06/2026] Nhóm NganHang:** Gọi `querySP(req, 'TRACUU', 'sp_DanhSachNhanVien', {})` — SP chạy trên TRACUU đọc NhanVien qua LINK1+LINK2 (TRACUU không có NhanVien local sau khi sửa PUB_TRACUU).
+- **Tính năng Thêm Mới:** Tự động sinh Mã Nhân Viên (`MANV`) theo định dạng chi nhánh — prefix `BT` cho BENTHANH (`BT001`, `BT002`...), prefix `TD` cho TANDINH (`TD001`, `TD002`...). Đảm bảo không trùng khi chuyển nhân viên qua lại giữa 2 chi nhánh. Hàm `sinhMANV()` query `TOP 1 MANV LIKE prefix%` rồi tăng số thứ tự.
 - Có thêm tính năng **Chuyển Chi Nhánh**: gọi SP `sp_ChuyenNhanVien(@MANV, @MACN_MOI)` để chuyển dữ liệu nhân viên từ phân mảnh này sang phân mảnh khác qua Linked Server (sử dụng `sqlcmd` qua hàm `execSPAdmin` do hạn chế của driver Node.js với Distributed Transaction).
 - Có thêm tính năng **Phục hồi**: Cho phép khôi phục lại nhân viên đã xóa/nghỉ việc (`TrangThaiXoa = 0`).
 
@@ -31,10 +35,11 @@ Tất cả các chức năng nghiệp vụ được tách ra thành từng file 
 
 ## 6. `baocao.js` (Thống kê, Sao kê)
 - **Cập nhật Logic Sao Kê Tài Khoản:** Trình bày dữ liệu trả về trực tiếp từ SP_SaoKeTaiKhoan. Toàn bộ logic tính số dư lũy kế đã được đẩy xuống tầng SQL Server xử lý.
-- **Liệt kê:** 
+- **Liệt kê:**
   - `GET /baocao/lietke?loai=tk`: Query lấy danh sách tài khoản, kết nối `KhachHang`. **ORDER BY tk.NGAYMOTK DESC**.
   - `GET /baocao/lietke?loai=kh`: Trả về danh sách khách hàng. **ORDER BY MACN, TEN, HO**.
   - Không cần SP vì thao tác lấy danh sách trực tiếp khá nhẹ và ít cần xử lý giao dịch ACID.
+- **Tìm kiếm (search):** Form liệt kê KH hỗ trợ tham số `?search=` — lọc theo tên hoặc CMND với `LIKE %keyword%` trên cả 2 cột `HO+TEN` và `CMND`. Áp dụng cho cả nhóm `NganHang` và `ChiNhanh`.
 
 ## 7. `quantri.js` (Tạo Tài Khoản / Phân Quyền)
 - **Chức năng Tạo Tài Khoản (Login):** Giao diện đã được nâng cấp thành thiết kế 2 cột song song (Grid Layout / Flexbox) chuyên nghiệp, hiển thị trực quan cả 2 bảng.
@@ -42,5 +47,5 @@ Tất cả các chức năng nghiệp vụ được tách ra thành từng file 
 - **Bảng Theo Dõi Trạng Thái Login:** Dưới form tạo tài khoản là bảng danh sách (Route `GET /quantri/login-management/list`). Bảng hiển thị thông tin những ai đã được cấp tài khoản, ai chưa. Có bộ lọc theo Loại, Trạng thái và tìm kiếm text.
 - **Xem / Đặt Lại Mật Khẩu (Chỉ dành cho NganHang):**
   - Route `GET /quantri/login-management/password/:loginName`: trả về mật khẩu plain-text từ bảng `QuanTriLogin`.
-  - Route `POST /quantri/login-management/reset-password`: đặt lại mật khẩu về mặc định (`123456`).
+  - Route `POST /quantri/login-management/reset-password`: đặt lại mật khẩu về mặc định (`123456`) trên tất cả 3 server đồng thời.
   - Route `POST /quantri/login-management/cleanup-sync-error`: dọn dẹp các tài khoản bị lỗi đồng bộ (có trên bảng phụ trợ nhưng Login thật đã mất).

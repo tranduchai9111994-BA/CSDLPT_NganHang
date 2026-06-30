@@ -293,6 +293,214 @@ GRANT EXECUTE ON dbo.SP_TaoTaiKhoan TO ChiNhanh;
 DENY EXECUTE ON dbo.SP_TaoTaiKhoan TO KhachHang;
 `;
 
+// sp_TaiKhoanKhachHang: deploy trên tất cả server giao dịch (BENTHANH, TANDINH, và NGUON để đồng bộ)
+const createSpTaiKhoanKhachHang = `
+IF OBJECT_ID('dbo.sp_TaiKhoanKhachHang', 'P') IS NULL
+    EXEC('CREATE PROCEDURE dbo.sp_TaiKhoanKhachHang AS SELECT 1;');
+`;
+
+const alterSpTaiKhoanKhachHang = `
+ALTER PROCEDURE [dbo].[sp_TaiKhoanKhachHang]
+    @CMND nchar(10)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT RTRIM(tk.SOTK)  AS SOTK, RTRIM(tk.CMND) AS CMND,
+           tk.SODU, RTRIM(tk.MACN) AS MACN,
+           CONVERT(varchar, tk.NGAYMOTK, 103) AS NGAYMOTK
+    FROM TaiKhoan tk
+    WHERE RTRIM(tk.CMND) = RTRIM(@CMND)
+    ORDER BY tk.NGAYMOTK DESC;
+END
+`;
+
+const grantSpTaiKhoanKhachHang = `
+GRANT EXECUTE ON dbo.sp_TaiKhoanKhachHang TO KhachHang;
+GRANT EXECUTE ON dbo.sp_TaiKhoanKhachHang TO ChiNhanh;
+GRANT EXECUTE ON dbo.sp_TaiKhoanKhachHang TO NganHang;
+`;
+
+// sp_DanhSachTaiKhoan + sp_SaoKeToanBo: chỉ deploy trên TRACUU và NGUON
+// (dùng LINK1+LINK2 — LINK2 chỉ định nghĩa trên TRACUU/NGUON)
+const createSpDanhSachTaiKhoan = `
+IF OBJECT_ID('dbo.sp_DanhSachTaiKhoan', 'P') IS NULL
+    EXEC('CREATE PROCEDURE dbo.sp_DanhSachTaiKhoan AS SELECT 1;');
+`;
+
+const alterSpDanhSachTaiKhoan = `
+ALTER PROCEDURE [dbo].[sp_DanhSachTaiKhoan]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT RTRIM(tk.SOTK) AS SOTK, RTRIM(tk.CMND) AS CMND,
+           tk.SODU, RTRIM(tk.MACN) AS MACN,
+           CONVERT(varchar, tk.NGAYMOTK, 103) AS NGAYMOTK,
+           RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen
+    FROM [LINK1].NGANHANG.dbo.TaiKhoan tk
+    LEFT JOIN KhachHang kh ON RTRIM(tk.CMND) = RTRIM(kh.CMND)
+    UNION ALL
+    SELECT RTRIM(tk.SOTK), RTRIM(tk.CMND), tk.SODU, RTRIM(tk.MACN),
+           CONVERT(varchar, tk.NGAYMOTK, 103),
+           RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN)
+    FROM [LINK2].NGANHANG.dbo.TaiKhoan tk
+    LEFT JOIN KhachHang kh ON RTRIM(tk.CMND) = RTRIM(kh.CMND)
+    ORDER BY NGAYMOTK DESC;
+END
+`;
+
+const createSpSaoKeToanBo = `
+IF OBJECT_ID('dbo.sp_SaoKeToanBo', 'P') IS NULL
+    EXEC('CREATE PROCEDURE dbo.sp_SaoKeToanBo AS SELECT 1;');
+`;
+
+const alterSpSaoKeToanBo = `
+ALTER PROCEDURE [dbo].[sp_SaoKeToanBo]
+    @TUNGAY datetime,
+    @DENNGAY datetime
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT RTRIM(g.SOTK) AS SOTK, g.NGAYGD, g.LOAIGD, g.SOTIEN
+    FROM [LINK1].NGANHANG.dbo.GD_GOIRUT g WHERE g.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    UNION ALL
+    SELECT RTRIM(g.SOTK), g.NGAYGD, g.LOAIGD, g.SOTIEN
+    FROM [LINK2].NGANHANG.dbo.GD_GOIRUT g WHERE g.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    UNION ALL
+    SELECT RTRIM(c.SOTK_CHUYEN), c.NGAYGD, 'CT', c.SOTIEN
+    FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN c WHERE c.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    UNION ALL
+    SELECT RTRIM(c.SOTK_NHAN), c.NGAYGD, 'NT', c.SOTIEN
+    FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN c WHERE c.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    UNION ALL
+    SELECT RTRIM(c.SOTK_CHUYEN), c.NGAYGD, 'CT', c.SOTIEN
+    FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN c WHERE c.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    UNION ALL
+    SELECT RTRIM(c.SOTK_NHAN), c.NGAYGD, 'NT', c.SOTIEN
+    FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN c WHERE c.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    ORDER BY NGAYGD;
+END
+`;
+
+// sp_DanhSachNhanVien: chỉ deploy trên TRACUU (đọc NhanVien qua LINK1+LINK2)
+const createSpDanhSachNhanVien = `
+IF OBJECT_ID('dbo.sp_DanhSachNhanVien', 'P') IS NULL
+    EXEC('CREATE PROCEDURE dbo.sp_DanhSachNhanVien AS SELECT 1;');
+`;
+
+const alterSpDanhSachNhanVien = `
+ALTER PROCEDURE [dbo].[sp_DanhSachNhanVien]
+    @MACN nchar(10) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT RTRIM(MANV) AS MANV,
+           RTRIM(HO) AS HO, RTRIM(TEN) AS TEN,
+           RTRIM(HO) + ' ' + RTRIM(TEN) AS HoTen,
+           RTRIM(CMND) AS CMND,
+           RTRIM(MACN) AS MACN,
+           SODT, DIACHI, TrangThaiXoa
+    FROM (
+        SELECT MANV, HO, TEN, CMND, MACN, SODT, DIACHI, TrangThaiXoa
+        FROM [LINK1].NGANHANG.dbo.NhanVien
+        UNION ALL
+        SELECT MANV, HO, TEN, CMND, MACN, SODT, DIACHI, TrangThaiXoa
+        FROM [LINK2].NGANHANG.dbo.NhanVien
+    ) AS AllNV
+    WHERE (@MACN IS NULL OR RTRIM(MACN) = RTRIM(@MACN))
+    ORDER BY MACN, HO, TEN;
+END
+`;
+
+// sp_LietKeTaiKhoanTheoNgay phiên bản TRACUU: đọc TaiKhoan qua LINK1+LINK2
+const createSpLietKeTKTheoNgay_TRACUU = `
+IF OBJECT_ID('dbo.sp_LietKeTaiKhoanTheoNgay', 'P') IS NULL
+    EXEC('CREATE PROCEDURE dbo.sp_LietKeTaiKhoanTheoNgay AS SELECT 1;');
+`;
+
+const alterSpLietKeTKTheoNgay_TRACUU = `
+ALTER PROCEDURE [dbo].[sp_LietKeTaiKhoanTheoNgay]
+    @MACN nchar(10) = NULL,
+    @TUNGAY date = NULL,
+    @DENNGAY date = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT RTRIM(tk.SOTK) AS SOTK, RTRIM(tk.CMND) AS CMND,
+           RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen,
+           tk.SODU, RTRIM(tk.MACN) AS MACN,
+           CONVERT(varchar, tk.NGAYMOTK, 103) AS NGAYMOTK
+    FROM (
+        SELECT SOTK, CMND, SODU, MACN, NGAYMOTK
+        FROM [LINK1].NGANHANG.dbo.TaiKhoan
+        UNION ALL
+        SELECT SOTK, CMND, SODU, MACN, NGAYMOTK
+        FROM [LINK2].NGANHANG.dbo.TaiKhoan
+    ) AS tk
+    LEFT JOIN KhachHang kh ON RTRIM(tk.CMND) = RTRIM(kh.CMND)
+    WHERE (@MACN IS NULL OR RTRIM(tk.MACN) = RTRIM(@MACN))
+      AND (@TUNGAY IS NULL OR CAST(tk.NGAYMOTK AS DATE) >= @TUNGAY)
+      AND (@DENNGAY IS NULL OR CAST(tk.NGAYMOTK AS DATE) <= @DENNGAY)
+    ORDER BY tk.NGAYMOTK DESC;
+END
+`;
+
+// SP_DanhSachTrangThaiLogin phiên bản TRACUU: NhanVien qua LINK, KhachHang local
+const alterSpDanhSachTrangThaiLogin_TRACUU = `
+ALTER PROCEDURE [dbo].[SP_DanhSachTrangThaiLogin]
+    @MACN nchar(10) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT
+        'NhanVien' AS LoaiTK,
+        nv.MANV AS MaThamChieu,
+        RTRIM(nv.HO) + ' ' + RTRIM(nv.TEN) AS HoTen,
+        RTRIM(nv.MACN) AS MACN,
+        CASE
+            WHEN ql.LoginName IS NULL THEN 0
+            WHEN EXISTS (SELECT 1 FROM sys.server_principals WHERE name = ql.LoginName) THEN 1
+            ELSE 2
+        END AS DaCapTaiKhoan,
+        ql.LoginName,
+        ql.NhomQuyen,
+        ql.NgayTao,
+        ql.NgayCapNhatMK
+    FROM (
+        SELECT MANV, HO, TEN, CMND, MACN, TrangThaiXoa
+        FROM [LINK1].NGANHANG.dbo.NhanVien
+        UNION ALL
+        SELECT MANV, HO, TEN, CMND, MACN, TrangThaiXoa
+        FROM [LINK2].NGANHANG.dbo.NhanVien
+    ) AS nv
+    LEFT JOIN dbo.QuanTriLogin ql ON RTRIM(ql.MaThamChieu) = RTRIM(nv.MANV) AND ql.LoaiTaiKhoan = 'NhanVien'
+    WHERE nv.TrangThaiXoa = 0
+      AND (@MACN IS NULL OR RTRIM(nv.MACN) = RTRIM(@MACN))
+
+    UNION ALL
+
+    SELECT
+        'KhachHang' AS LoaiTK,
+        kh.CMND AS MaThamChieu,
+        RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen,
+        RTRIM(kh.MACN) AS MACN,
+        CASE
+            WHEN ql.LoginName IS NULL THEN 0
+            WHEN EXISTS (SELECT 1 FROM sys.server_principals WHERE name = ql.LoginName) THEN 1
+            ELSE 2
+        END AS DaCapTaiKhoan,
+        ql.LoginName,
+        ql.NhomQuyen,
+        ql.NgayTao,
+        ql.NgayCapNhatMK
+    FROM KhachHang kh
+    LEFT JOIN dbo.QuanTriLogin ql ON RTRIM(ql.MaThamChieu) = RTRIM(kh.CMND) AND ql.LoaiTaiKhoan = 'KhachHang'
+    WHERE (@MACN IS NULL OR RTRIM(kh.MACN) = RTRIM(@MACN))
+
+    ORDER BY LoaiTK, DaCapTaiKhoan ASC, HoTen;
+END
+`;
+
 async function executeScripts() {
     const servers = ['NGUON', 'BENTHANH', 'TANDINH', 'TRACUU'];
     for (const key of servers) {
@@ -328,6 +536,30 @@ async function executeScripts() {
             await pool.request().batch(createSpTaoTaiKhoan);
             await pool.request().batch(alterSpTaoTaiKhoanNguon);
             await pool.request().batch(grantSpTaoTaiKhoan);
+
+            // sp_TaiKhoanKhachHang: deploy trên tất cả server
+            await pool.request().batch(createSpTaiKhoanKhachHang);
+            await pool.request().batch(alterSpTaiKhoanKhachHang);
+            await pool.request().batch(grantSpTaiKhoanKhachHang);
+
+            // sp_DanhSachTaiKhoan + sp_SaoKeToanBo: chỉ deploy trên TRACUU/NGUON (cần LINK2)
+            if (key === 'TRACUU' || key === 'NGUON') {
+                console.log(`[${key}] Đang deploy SP xuyên mảnh (LINK1+LINK2)...`);
+                await pool.request().batch(createSpDanhSachTaiKhoan);
+                await pool.request().batch(alterSpDanhSachTaiKhoan);
+                await pool.request().batch(createSpSaoKeToanBo);
+                await pool.request().batch(alterSpSaoKeToanBo);
+            }
+
+            // SP đặc thù TRACUU: đọc NhanVien/TaiKhoan qua LINK (TRACUU chỉ có KhachHang local)
+            if (key === 'TRACUU') {
+                console.log(`[${key}] Đang deploy SP TRACUU-specific (NhanVien/TaiKhoan qua LINK)...`);
+                await pool.request().batch(createSpDanhSachNhanVien);
+                await pool.request().batch(alterSpDanhSachNhanVien);
+                await pool.request().batch(createSpLietKeTKTheoNgay_TRACUU);
+                await pool.request().batch(alterSpLietKeTKTheoNgay_TRACUU);
+                await pool.request().batch(alterSpDanhSachTrangThaiLogin_TRACUU);
+            }
 
             console.log(`[${key}] Thành công!`);
             await pool.close();

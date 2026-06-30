@@ -5,6 +5,12 @@ Tài liệu này tổng hợp code mới nhất của tất cả các Stored Pro
 **[Cập nhật 19/06/2026] Thông tin đưa vào Article (Replication):**
 - **PUB_BENTHANH & PUB_TANDINH:** Đã add toàn bộ 11 SP nghiệp vụ bên dưới vào Article (chế độ Replicate stored procedure definitions).
 - **PUB_TRACUU:** Chỉ add 2 SP là `sp_Login_App` và `SP_TaoTaiKhoan`.
+- **[Cập nhật 30/06/2026] SP riêng của TRACUU** (không qua Replication, cài bằng `setup_db.js` hoặc [`sql/deploy_tracuu.sql`](../sql/deploy_tracuu.sql)):
+  - `sp_DanhSachTaiKhoan` — gộp TaiKhoan từ LINK1+LINK2, JOIN KhachHang local
+  - `sp_SaoKeToanBo` — gộp GD_GOIRUT + GD_CHUYENTIEN từ LINK1+LINK2
+  - `sp_DanhSachNhanVien` — gộp NhanVien từ LINK1+LINK2 (TRACUU không có NhanVien local)
+  - `sp_LietKeTaiKhoanTheoNgay` — phiên bản TRACUU, đọc TaiKhoan qua LINK1+LINK2
+  - `SP_DanhSachTrangThaiLogin` — phiên bản TRACUU, đọc NhanVien qua LINK, KhachHang+QuanTriLogin local
 - **Lưu ý:** Đã xoá bỏ `SP_DangNhap` (không phải là Article, xoá thành công bằng `DROP PROCEDURE IF EXISTS`).
 
 ## sp_ChuyenNhanVien
@@ -65,6 +71,8 @@ END
 
 ## sp_ChuyenTien
 ```sql
+-- TaiKhoan được NHÂN BẢN TOÀN VẸN → mọi TK đều tồn tại local.
+-- Dùng MACN để phân biệt: cùng CN → ghi local, khác CN → ghi qua LINK1.
 CREATE   PROCEDURE [dbo].[sp_ChuyenTien]
     @SOTK_CHUYEN nchar(9),
     @SOTK_NHAN   nchar(9),
@@ -81,18 +89,28 @@ BEGIN
         RETURN;
     END
 
-    DECLARE @IsNhanLocal bit = 0;
-    IF EXISTS (SELECT 1 FROM TaiKhoan WHERE RTRIM(SOTK) = RTRIM(@SOTK_NHAN))
-        SET @IsNhanLocal = 1;
-
-    IF @IsNhanLocal = 0
+    -- Kiểm tra TK chuyển + lấy MACN (đọc local — nhân bản full)
+    DECLARE @MACN_CHUYEN nchar(10);
+    SELECT @MACN_CHUYEN = RTRIM(MACN) FROM TaiKhoan WHERE RTRIM(SOTK) = RTRIM(@SOTK_CHUYEN);
+    IF @MACN_CHUYEN IS NULL
     BEGIN
-        IF NOT EXISTS (SELECT 1 FROM [LINK1].NGANHANG.dbo.TaiKhoan WHERE RTRIM(SOTK) = RTRIM(@SOTK_NHAN))
-        BEGIN
-            RAISERROR(N'Tài khoản nhận không tồn tại trên toàn hệ thống.',16,1);
-            RETURN;
-        END
+        RAISERROR(N'Tài khoản chuyển không tồn tại.',16,1);
+        RETURN;
     END
+
+    -- Kiểm tra TK nhận + lấy MACN (đọc local — nhân bản full, không cần LINK1)
+    DECLARE @MACN_NHAN nchar(10);
+    SELECT @MACN_NHAN = RTRIM(MACN) FROM TaiKhoan WHERE RTRIM(SOTK) = RTRIM(@SOTK_NHAN);
+    IF @MACN_NHAN IS NULL
+    BEGIN
+        RAISERROR(N'Tài khoản nhận không tồn tại trên toàn hệ thống.',16,1);
+        RETURN;
+    END
+
+    -- So sánh MACN: cùng CN → ghi local, khác CN → ghi qua LINK1
+    DECLARE @IsNhanLocal bit = 0;
+    IF @MACN_NHAN = @MACN_CHUYEN
+        SET @IsNhanLocal = 1;
 
     BEGIN TRY
         BEGIN DISTRIBUTED TRANSACTION;
@@ -235,6 +253,85 @@ BEGIN
       AND (@TUNGAY IS NULL OR CAST(tk.NGAYMOTK AS DATE) >= @TUNGAY)
       AND (@DENNGAY IS NULL OR CAST(tk.NGAYMOTK AS DATE) <= @DENNGAY)
     ORDER BY tk.NGAYMOTK DESC;
+END
+```
+
+## sp_TaiKhoanKhachHang *(chạy trên BENTHANH/TANDINH — GRANT EXECUTE cho KhachHang)*
+```sql
+-- Trả danh sách TK thuộc về 1 CMND. KhachHang có EXECUTE nhưng không có SELECT trực tiếp
+-- trên TaiKhoan → SP là cửa ngõ duy nhất, đảm bảo KhachHang chỉ thấy TK của mình.
+CREATE OR ALTER PROCEDURE sp_TaiKhoanKhachHang
+    @CMND nchar(10)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT RTRIM(tk.SOTK) AS SOTK, RTRIM(tk.CMND) AS CMND,
+           tk.SODU, RTRIM(tk.MACN) AS MACN,
+           CONVERT(varchar, tk.NGAYMOTK, 103) AS NGAYMOTK
+    FROM TaiKhoan tk
+    WHERE RTRIM(tk.CMND) = RTRIM(@CMND)
+    ORDER BY tk.NGAYMOTK DESC;
+END
+```
+
+## sp_DanhSachTaiKhoan *(TRACUU only — dùng LINK1+LINK2)*
+```sql
+-- Chạy trên TRACUU. Gộp TaiKhoan từ BENTHANH (LINK1) và TANDINH (LINK2),
+-- JOIN KhachHang local (TRACUU replicate full KhachHang).
+CREATE OR ALTER PROCEDURE sp_DanhSachTaiKhoan
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT RTRIM(tk.SOTK)  AS SOTK, RTRIM(tk.CMND) AS CMND,
+           tk.SODU, RTRIM(tk.MACN) AS MACN,
+           CONVERT(varchar, tk.NGAYMOTK, 103) AS NGAYMOTK,
+           RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen
+    FROM [LINK1].NGANHANG.dbo.TaiKhoan tk
+    LEFT JOIN KhachHang kh ON RTRIM(tk.CMND) = RTRIM(kh.CMND)
+    UNION ALL
+    SELECT RTRIM(tk.SOTK), RTRIM(tk.CMND), tk.SODU, RTRIM(tk.MACN),
+           CONVERT(varchar, tk.NGAYMOTK, 103),
+           RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN)
+    FROM [LINK2].NGANHANG.dbo.TaiKhoan tk
+    LEFT JOIN KhachHang kh ON RTRIM(tk.CMND) = RTRIM(kh.CMND)
+    ORDER BY NGAYMOTK DESC;
+END
+```
+
+## sp_SaoKeToanBo *(TRACUU only — dùng LINK1+LINK2)*
+```sql
+-- Chạy trên TRACUU. Tổng hợp GD_GOIRUT + GD_CHUYENTIEN từ cả 2 chi nhánh
+-- trong khoảng thời gian @TUNGAY–@DENNGAY, không lọc theo SOTK cụ thể.
+CREATE OR ALTER PROCEDURE sp_SaoKeToanBo
+    @TUNGAY datetime,
+    @DENNGAY datetime
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT RTRIM(g.SOTK) AS SOTK, g.NGAYGD, g.LOAIGD, g.SOTIEN
+    FROM [LINK1].NGANHANG.dbo.GD_GOIRUT g
+    WHERE g.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    UNION ALL
+    SELECT RTRIM(g.SOTK), g.NGAYGD, g.LOAIGD, g.SOTIEN
+    FROM [LINK2].NGANHANG.dbo.GD_GOIRUT g
+    WHERE g.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    UNION ALL
+    SELECT RTRIM(c.SOTK_CHUYEN), c.NGAYGD, 'CT', c.SOTIEN
+    FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN c
+    WHERE c.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    UNION ALL
+    SELECT RTRIM(c.SOTK_NHAN), c.NGAYGD, 'NT', c.SOTIEN
+    FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN c
+    WHERE c.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    UNION ALL
+    SELECT RTRIM(c.SOTK_CHUYEN), c.NGAYGD, 'CT', c.SOTIEN
+    FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN c
+    WHERE c.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    UNION ALL
+    SELECT RTRIM(c.SOTK_NHAN), c.NGAYGD, 'NT', c.SOTIEN
+    FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN c
+    WHERE c.NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    ORDER BY NGAYGD;
 END
 ```
 
@@ -689,6 +786,117 @@ BEGIN
     END
 
     RETURN 0;
+END
+```
+
+## sp_DanhSachNhanVien *(TRACUU only — dùng LINK1+LINK2)*
+```sql
+-- TRACUU không có NhanVien local (PUB_TRACUU chỉ replicate KhachHang).
+-- SP đọc NhanVien từ BENTHANH (LINK1) + TANDINH (LINK2).
+-- Dùng bởi: nhanvien.js (NganHang GET /), quantri.js (getNhanVienList)
+CREATE PROCEDURE [dbo].[sp_DanhSachNhanVien]
+    @MACN nchar(10) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT RTRIM(MANV) AS MANV,
+           RTRIM(HO) AS HO, RTRIM(TEN) AS TEN,
+           RTRIM(HO) + ' ' + RTRIM(TEN) AS HoTen,
+           RTRIM(CMND) AS CMND,
+           RTRIM(MACN) AS MACN,
+           SODT, DIACHI, TrangThaiXoa
+    FROM (
+        SELECT MANV, HO, TEN, CMND, MACN, SODT, DIACHI, TrangThaiXoa
+        FROM [LINK1].NGANHANG.dbo.NhanVien
+        UNION ALL
+        SELECT MANV, HO, TEN, CMND, MACN, SODT, DIACHI, TrangThaiXoa
+        FROM [LINK2].NGANHANG.dbo.NhanVien
+    ) AS AllNV
+    WHERE (@MACN IS NULL OR RTRIM(MACN) = RTRIM(@MACN))
+    ORDER BY MACN, HO, TEN;
+END
+```
+
+## sp_LietKeTaiKhoanTheoNgay *(phiên bản TRACUU — dùng LINK1+LINK2)*
+```sql
+-- Phiên bản chạy trên TRACUU. Bản gốc (ở SQL1/SQL2) đọc TaiKhoan local.
+-- TRACUU không có TaiKhoan local → đọc qua LINK1+LINK2, JOIN KhachHang local.
+-- Dùng bởi: baocao.js (NganHang liệt kê TK theo ngày)
+CREATE PROCEDURE [dbo].[sp_LietKeTaiKhoanTheoNgay]
+    @MACN nchar(10) = NULL,
+    @TUNGAY date = NULL,
+    @DENNGAY date = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT RTRIM(tk.SOTK) AS SOTK, RTRIM(tk.CMND) AS CMND,
+           RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen,
+           tk.SODU, RTRIM(tk.MACN) AS MACN,
+           CONVERT(varchar, tk.NGAYMOTK, 103) AS NGAYMOTK
+    FROM (
+        SELECT SOTK, CMND, SODU, MACN, NGAYMOTK
+        FROM [LINK1].NGANHANG.dbo.TaiKhoan
+        UNION ALL
+        SELECT SOTK, CMND, SODU, MACN, NGAYMOTK
+        FROM [LINK2].NGANHANG.dbo.TaiKhoan
+    ) AS tk
+    LEFT JOIN KhachHang kh ON RTRIM(tk.CMND) = RTRIM(kh.CMND)
+    WHERE (@MACN IS NULL OR RTRIM(tk.MACN) = RTRIM(@MACN))
+      AND (@TUNGAY IS NULL OR CAST(tk.NGAYMOTK AS DATE) >= @TUNGAY)
+      AND (@DENNGAY IS NULL OR CAST(tk.NGAYMOTK AS DATE) <= @DENNGAY)
+    ORDER BY tk.NGAYMOTK DESC;
+END
+```
+
+## SP_DanhSachTrangThaiLogin *(phiên bản TRACUU — NhanVien qua LINK)*
+```sql
+-- Phiên bản chạy trên TRACUU. Bản gốc (SQL1/SQL2) đọc NhanVien local.
+-- TRACUU không có NhanVien → đọc qua LINK1+LINK2. KhachHang + QuanTriLogin vẫn local.
+-- Dùng bởi: quantri.js (GET /login-management/list khi NganHang)
+CREATE PROCEDURE [dbo].[SP_DanhSachTrangThaiLogin]
+    @MACN nchar(10) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT
+        'NhanVien' AS LoaiTK, nv.MANV AS MaThamChieu,
+        RTRIM(nv.HO) + ' ' + RTRIM(nv.TEN) AS HoTen,
+        RTRIM(nv.MACN) AS MACN,
+        CASE
+            WHEN ql.LoginName IS NULL THEN 0
+            WHEN EXISTS (SELECT 1 FROM sys.server_principals WHERE name = ql.LoginName) THEN 1
+            ELSE 2
+        END AS DaCapTaiKhoan,
+        ql.LoginName, ql.NhomQuyen, ql.NgayTao, ql.NgayCapNhatMK
+    FROM (
+        SELECT MANV, HO, TEN, CMND, MACN, TrangThaiXoa
+        FROM [LINK1].NGANHANG.dbo.NhanVien
+        UNION ALL
+        SELECT MANV, HO, TEN, CMND, MACN, TrangThaiXoa
+        FROM [LINK2].NGANHANG.dbo.NhanVien
+    ) AS nv
+    LEFT JOIN dbo.QuanTriLogin ql ON RTRIM(ql.MaThamChieu) = RTRIM(nv.MANV) AND ql.LoaiTaiKhoan = 'NhanVien'
+    WHERE nv.TrangThaiXoa = 0
+      AND (@MACN IS NULL OR RTRIM(nv.MACN) = RTRIM(@MACN))
+
+    UNION ALL
+
+    SELECT
+        'KhachHang' AS LoaiTK, kh.CMND AS MaThamChieu,
+        RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen,
+        RTRIM(kh.MACN) AS MACN,
+        CASE
+            WHEN ql.LoginName IS NULL THEN 0
+            WHEN EXISTS (SELECT 1 FROM sys.server_principals WHERE name = ql.LoginName) THEN 1
+            ELSE 2
+        END AS DaCapTaiKhoan,
+        ql.LoginName, ql.NhomQuyen, ql.NgayTao, ql.NgayCapNhatMK
+    FROM KhachHang kh
+    LEFT JOIN dbo.QuanTriLogin ql ON RTRIM(ql.MaThamChieu) = RTRIM(kh.CMND) AND ql.LoaiTaiKhoan = 'KhachHang'
+    WHERE (@MACN IS NULL OR RTRIM(kh.MACN) = RTRIM(@MACN))
+
+    ORDER BY LoaiTK, DaCapTaiKhoan ASC, HoTen;
 END
 ```
 

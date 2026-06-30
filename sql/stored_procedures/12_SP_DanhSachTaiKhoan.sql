@@ -9,6 +9,14 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    -- ==========================================================================
+    -- BƯỚC 1: GỘP DỮ LIỆU TÀI KHOẢN TỪ CẢ 2 CHI NHÁNH
+    -- Mục đích: TRACUU không có TaiKhoan local, phải đọc qua Linked Server
+    --   - LINK1 → chi nhánh BENTHANH
+    --   - LINK2 → chi nhánh TANDINH
+    -- JOIN với KhachHang local (replicate full) để lấy họ tên khách hàng
+    -- Kết quả sắp xếp theo ngày mở TK mới nhất lên trước
+    -- ==========================================================================
     SELECT RTRIM(tk.SOTK)  AS SOTK,
            RTRIM(tk.CMND)  AS CMND,
            tk.SODU,

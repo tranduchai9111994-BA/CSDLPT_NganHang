@@ -10,6 +10,16 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    -- ==========================================================================
+    -- BƯỚC 1: GỘP DANH SÁCH NHÂN VIÊN TỪ CẢ 2 CHI NHÁNH
+    -- Mục đích: TRACUU không có bảng NhanVien local
+    -- → Đọc từ LINK1 (BENTHANH) và LINK2 (TANDINH) rồi UNION ALL
+    -- ==========================================================================
+    -- ==========================================================================
+    -- BƯỚC 2: LỌC THEO CHI NHÁNH (NẾU CÓ) VÀ SẮP XẾP
+    -- Mục đích: Nếu @MACN = NULL → lấy tất cả; có giá trị → lọc theo chi nhánh
+    -- Sắp xếp theo MACN, rồi theo HO + TEN để dễ tìm kiếm
+    -- ==========================================================================
     SELECT RTRIM(MANV) AS MANV,
            RTRIM(HO) AS HO, RTRIM(TEN) AS TEN,
            RTRIM(HO) + ' ' + RTRIM(TEN) AS HoTen,

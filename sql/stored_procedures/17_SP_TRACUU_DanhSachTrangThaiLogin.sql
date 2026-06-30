@@ -10,6 +10,16 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    -- ==========================================================================
+    -- BƯỚC 1: LẤY DANH SÁCH NHÂN VIÊN + TRẠNG THÁI TÀI KHOẢN LOGIN
+    -- Mục đích: Gộp NhanVien từ 2 chi nhánh (LINK1 + LINK2) vì TRACUU không có local
+    -- LEFT JOIN với QuanTriLogin để biết NV đã được cấp tài khoản chưa
+    -- Xác định trạng thái DaCapTaiKhoan:
+    --   0 = chưa cấp (không có record trong QuanTriLogin)
+    --   1 = đã cấp và login đang active (tồn tại trong sys.server_principals)
+    --   2 = đã cấp nhưng login bị xóa/disable (có record nhưng không tìm thấy trong sys)
+    -- Chỉ lấy NV đang làm việc (TrangThaiXoa = 0)
+    -- ==========================================================================
     SELECT
         'NhanVien' AS LoaiTK,
         nv.MANV AS MaThamChieu,
@@ -35,6 +45,12 @@ BEGIN
     WHERE nv.TrangThaiXoa = 0
       AND (@MACN IS NULL OR RTRIM(nv.MACN) = RTRIM(@MACN))
 
+    -- ==========================================================================
+    -- BƯỚC 2: GỘP THÊM DANH SÁCH KHÁCH HÀNG + TRẠNG THÁI LOGIN
+    -- Mục đích: KhachHang được replicate full trên TRACUU → đọc local
+    -- Cùng logic LEFT JOIN QuanTriLogin và kiểm tra sys.server_principals
+    -- Lọc theo @MACN nếu có
+    -- ==========================================================================
     UNION ALL
 
     SELECT
@@ -55,6 +71,11 @@ BEGIN
     LEFT JOIN dbo.QuanTriLogin ql ON RTRIM(ql.MaThamChieu) = RTRIM(kh.CMND) AND ql.LoaiTaiKhoan = 'KhachHang'
     WHERE (@MACN IS NULL OR RTRIM(kh.MACN) = RTRIM(@MACN))
 
+    -- ==========================================================================
+    -- BƯỚC 3: SẮP XẾP KẾT QUẢ
+    -- Mục đích: Nhóm theo loại TK (KhachHang/NhanVien), ưu tiên chưa cấp TK lên trước
+    -- rồi sắp theo họ tên để dễ tìm kiếm
+    -- ==========================================================================
     ORDER BY LoaiTK, DaCapTaiKhoan ASC, HoTen;
 END
 GO

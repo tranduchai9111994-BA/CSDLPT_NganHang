@@ -12,6 +12,21 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    -- ==========================================================================
+    -- BƯỚC 1: GỘP TÀI KHOẢN TỪ CẢ 2 CHI NHÁNH
+    -- Mục đích: TRACUU không có TaiKhoan local
+    -- → Đọc từ LINK1 (BENTHANH) và LINK2 (TANDINH) rồi UNION ALL
+    -- ==========================================================================
+    -- ==========================================================================
+    -- BƯỚC 2: JOIN VỚI KHÁCH HÀNG ĐỂ LẤY HỌ TÊN
+    -- Mục đích: KhachHang được replicate full trên TRACUU → JOIN local (nhanh)
+    -- ==========================================================================
+    -- ==========================================================================
+    -- BƯỚC 3: LỌC THEO ĐIỀU KIỆN VÀ SẮP XẾP
+    -- Mục đích: Lọc tùy chọn theo chi nhánh (@MACN) và khoảng ngày mở TK
+    -- Nếu tham số NULL → không lọc theo điều kiện đó (lấy tất cả)
+    -- Sắp xếp theo ngày mở TK mới nhất lên trước
+    -- ==========================================================================
     SELECT RTRIM(tk.SOTK) AS SOTK, RTRIM(tk.CMND) AS CMND,
            RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen,
            tk.SODU, RTRIM(tk.MACN) AS MACN,

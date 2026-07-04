@@ -50,7 +50,11 @@ Sau khi chuẩn bị xong, tiến hành cấu hình Merge Replication theo mô h
 ### 3.1. Article cấu hình cho từng Publication [Hiệu chỉnh 30/06/2026]
 Kiểu Replicate đã chọn cho Stored Procedures: **"Replicate stored procedure definitions"** (đồng bộ cấu trúc/code), KHÔNG dùng "Replicate as execution".
 - **PUB_BENTHANH và PUB_TANDINH:** Bảng: 6 bảng (ChiNhanh, GD_CHUYENTIEN, GD_GOIRUT, KhachHang, NhanVien, TaiKhoan). SP: 11 SP nghiệp vụ và quản trị.
-- **PUB_TRACUU:** **Chỉ 1 article duy nhất: bảng `KhachHang`** (replicate full toàn bộ KhachHang từ NGUON — không filter theo MACN). TRACUU không cần các bảng giao dịch hay NhanVien/TaiKhoan vì khi cần, SP dùng Linked Server (`LINK1`→SQL1, `LINK2`→SQL2) để lấy. Các SP đặc thù cài thủ công qua `setup_db.js`:
+- **PUB_TRACUU:** Replicate sang SQL3 (TRACUU). Articles gồm:
+  - **Bảng:** `KhachHang` (replicate full toàn bộ — không filter theo MACN)
+  - **SP (replicate definition):** `sp_Login_App`, `SP_TaoTaiKhoan` — các SP cần chạy trên TRACUU và phải có guard `OBJECT_ID` để tương thích với schema (thiếu `NhanVien`/`ChiNhanh`)
+
+  TRACUU không cần các bảng giao dịch hay NhanVien/TaiKhoan vì khi cần, SP dùng Linked Server (`LINK1`→SQL1, `LINK2`→SQL2) để lấy. Các SP đặc thù cài thủ công qua `setup_db.js`:
   - `sp_DanhSachTaiKhoan` — TaiKhoan từ LINK1+LINK2 JOIN KhachHang local
   - `sp_SaoKeToanBo` — giao dịch từ LINK1+LINK2
   - `sp_DanhSachNhanVien` — NhanVien từ LINK1+LINK2
@@ -58,6 +62,19 @@ Kiểu Replicate đã chọn cho Stored Procedures: **"Replicate stored procedur
   - `SP_DanhSachTrangThaiLogin` — phiên bản TRACUU đọc NhanVien qua LINK, KhachHang local
 
 > ⚠️ **Hiện trạng SSMS:** Publication `PUB_TRACUU` hiện đang check tất cả 6 bảng — cần **bỏ check** các bảng ChiNhanh, GD_CHUYENTIEN, GD_GOIRUT, NhanVien, TaiKhoan, chỉ giữ lại KhachHang. Xem hướng dẫn sửa tại mục 3.2.
+
+### 3.1.1. Quy trình deploy SP thay đổi qua Replication (PUB_TRACUU)
+
+SP là article trong PUB_TRACUU → **không ALTER trực tiếp trên SQL3** (bị `MSmerge_tr_alterschemasonly` chặn). Quy trình đúng:
+
+1. Trên **NGUON (ES-HAITD16)**: `DISABLE TRIGGER [MSmerge_tr_alterschemaonly] ON DATABASE`
+2. `CREATE OR ALTER PROCEDURE dbo.sp_Login_App ...` (cập nhật nội dung SP)
+3. `ENABLE TRIGGER [MSmerge_tr_alterschemaonly] ON DATABASE`
+4. `EXEC sp_startpublication_snapshot @publication = 'PUB_TRACUU'` — tạo snapshot mới chứa SP đã sửa
+5. `EXEC sp_reinitmergesubscription @publication = 'PUB_TRACUU', @subscriber = 'ES-HAITD16\SQL3', @subscriber_db = 'NGANHANG'` — đánh dấu SQL3 cần reinit
+6. SSMS → Replication Monitor → SQL3 → Start Synchronization → chờ "Applied the snapshot and merged N data change(s)"
+
+> Trigger trên NGUON là `MSmerge_tr_alterschemaonly` (không có 's' cuối), khác với trigger trên SQL3 là `MSmerge_tr_alterschemasonly`. Dùng đúng tên khi DISABLE/ENABLE.
 
 ### 3.2. Hướng dẫn sửa PUB_TRACUU trên SSMS (bỏ article thừa)
 

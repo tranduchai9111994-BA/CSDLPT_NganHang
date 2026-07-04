@@ -258,6 +258,92 @@ EXEC msdb.dbo.sp_start_job @job_name = 'ES-HAITD16-NGANHANG-PUB_TRACUU-ES-HAITD1
 
 ---
 
+## Sự cố 8: `sp_Login_App` crash trên TRACUU — "Invalid object name 'NhanVien'"
+
+**Triệu chứng:**
+```
+Lỗi hệ thống: Invalid object name 'NhanVien'.
+```
+Admin (`admin`/`1`) không thể đăng nhập vào chi nhánh `TRACUU`.
+
+**Nguyên nhân gốc rễ:**
+`sp_Login_App` query `FROM NhanVien` và `FROM ChiNhanh` — 2 bảng này không tồn tại trên SQL3 (TRACUU chỉ có `KhachHang` + `QuanTriLogin`). SP crash ngay khi được gọi từ SQL3.
+
+**Cách xử lý đã áp dụng:**
+Thêm `OBJECT_ID` guard vào SP:
+```sql
+IF OBJECT_ID('dbo.NhanVien', 'U') IS NOT NULL
+BEGIN
+    SELECT @MANV = MANV, ... FROM NhanVien WHERE ...
+END
+
+IF @MANV IS NULL AND @NHOM = 'NganHang'
+BEGIN
+    SET @MACN = CASE WHEN OBJECT_ID('dbo.ChiNhanh','U') IS NOT NULL
+                     THEN (SELECT TOP 1 MACN FROM ChiNhanh)
+                     ELSE N'TRACUU' END;
+END
+```
+
+Deploy qua đúng mô hình phân tán (không ALTER trực tiếp trên Subscriber):
+1. Disable `MSmerge_tr_alterschemaonly` trên **NGUON (ES-HAITD16)**: `DISABLE TRIGGER [MSmerge_tr_alterschemaonly] ON DATABASE`
+2. `CREATE OR ALTER PROCEDURE sp_Login_App` với OBJECT_ID guard trên NGUON
+3. Re-enable trigger
+4. `sp_startpublication_snapshot @publication = 'PUB_TRACUU'` → tạo snapshot mới
+5. `sp_reinitmergesubscription` → đánh dấu SQL3 reinit
+6. View Synchronization Status → Start → SQL3 nhận SP mới qua replication
+
+**Bài học rút ra:**
+> SP nào là Article trong Publication thì **chỉ sửa tại Publisher (NGUON)**. Replication tự đẩy xuống Subscriber — không DDL trực tiếp trên Subscriber vì `MSmerge_tr_alterschemasonly` chặn mọi DDL.
+> Khi SP phải chạy trên nhiều site có schema khác nhau, dùng `OBJECT_ID` guard để SP tự thích nghi — một bản code chạy được trên tất cả site.
+
+---
+
+## Sự cố 9: KhachHang không đăng nhập được sau khi admin reset password
+
+**Triệu chứng:**
+Admin reset password cho KH qua giao diện quản trị → KH thử đăng nhập vẫn bị lỗi, dù credentials đúng.
+
+**Nguyên nhân gốc rễ:**
+`reset-password` trong `routes/quantri.js` dùng `DROP LOGIN + CREATE LOGIN` (thay vì `ALTER LOGIN`) để đổi mật khẩu. Khi DROP+CREATE, SQL Server sinh **SID mới** cho login. DB User trong database vẫn còn nhưng liên kết theo SID cũ → **orphaned user** — kết nối SQL thành công nhưng không thuộc role `KhachHang` nữa → mọi SP bị từ chối.
+
+*(Lý do dùng DROP+CREATE: `ALTER LOGIN` bị replication trigger chặn trên một số server.)*
+
+**Cách xử lý đã áp dụng:**
+
+*Fix code `quantri.js`*: Sau DROP+CREATE login, tự động drop + recreate DB User và gán lại role từ `QuanTriLogin.MaThamChieu` / `NhomQuyen`.
+
+*Fix hàng loạt orphaned users* (script chạy trên từng server SQL1/SQL2/SQL3):
+```sql
+USE NGANHANG; SET NOCOUNT ON;
+DECLARE @UserName nvarchar(128), @LoginName nvarchar(128), @RoleName nvarchar(128), @sql nvarchar(1000), @count int = 0;
+DECLARE cur CURSOR FOR
+    SELECT dp.name, ql.LoginName, ql.NhomQuyen
+    FROM sys.database_principals dp
+    LEFT JOIN sys.server_principals sp ON dp.sid = sp.sid
+    JOIN dbo.QuanTriLogin ql ON RTRIM(ql.MaThamChieu) = RTRIM(dp.name)
+    WHERE dp.type = 'S' AND dp.principal_id > 4 AND sp.name IS NULL;
+OPEN cur; FETCH NEXT FROM cur INTO @UserName, @LoginName, @RoleName;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @LoginName)
+    BEGIN
+        EXEC sp_executesql N'DROP USER [' + REPLACE(@UserName,']',']]') + N']';
+        EXEC sp_executesql N'CREATE USER [' + REPLACE(@UserName,']',']]') + N'] FOR LOGIN [' + REPLACE(@LoginName,']',']]') + N']';
+        EXEC sp_executesql N'EXEC sp_addrolemember ''' + REPLACE(@RoleName,'''','''''') + N''', [' + REPLACE(@UserName,']',']]') + N']';
+        SET @count += 1; PRINT '✓ Fixed: ' + @UserName;
+    END
+    FETCH NEXT FROM cur INTO @UserName, @LoginName, @RoleName;
+END
+CLOSE cur; DEALLOCATE cur;
+PRINT '--- Hoàn thành: ' + CAST(@count AS varchar) + ' orphaned user(s) ---';
+```
+
+**Bài học rút ra:**
+> `DROP LOGIN + CREATE LOGIN` đổi SID → DB User bị orphaned. Luôn re-link DB User sau khi recreate login. Script fix hàng loạt dựa vào bảng `QuanTriLogin` — đây là lý do bảng này phải được cập nhật đầy đủ khi tạo tài khoản.
+
+---
+
 ## Sự cố 6: Dữ liệu TRACUU (SQL3) không đồng bộ sau khi migration
 
 **Triệu chứng:**

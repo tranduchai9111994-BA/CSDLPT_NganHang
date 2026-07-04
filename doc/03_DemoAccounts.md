@@ -48,18 +48,32 @@ Xác thực qua SQL Server Authentication — login name là tên SQL Login.
 
 ---
 
-## Tài Khoản Khách Hàng
+## Tài Khoản Khách Hàng Demo
 
-Khách hàng đăng nhập bằng **số CMND** làm SQL Login.  
-Tài khoản SQL phải được tạo thủ công và gán vào role `KhachHang`.
+Khách hàng đăng nhập bằng **số CMND** làm SQL Login, mật khẩu mặc định `1`.  
+Script tạo sẵn: [`sql/setup/11_TaoTaiKhoanKhachHang_Demo.sql`](../sql/setup/11_TaoTaiKhoanKhachHang_Demo.sql)
 
-| SQL Login | Mật khẩu | Role | Ghi chú |
-|-----------|----------|------|---------|
-| *(CMND khách hàng)* | *(tự đặt)* | `KhachHang` | Tạo theo từng khách |
+### Chi nhánh Bến Thành (SQL1)
+
+| SQL Login (CMND) | Mật khẩu | Họ tên |
+|-----------------|----------|--------|
+| `1111111111` | `1` | Nguyễn Văn An |
+| `0011223344` | `1` | Trần Đức Hải |
+
+### Chi nhánh Tân Định (SQL2)
+
+| SQL Login (CMND) | Mật khẩu | Họ tên |
+|-----------------|----------|--------|
+| `2222222222` | `1` | Nguyễn Thị Bình |
+| `0099887766` | `1` | Lê Văn Cường |
+| `3333333333` | `1` | Phạm Thị Dung |
+| `4444444444` | `1` | Hoàng Văn Em |
 
 **Quyền của KhachHang:**
 - EXECUTE `sp_TaiKhoanKhachHang` — xem danh sách tài khoản của mình
 - EXECUTE `SP_SaoKeTaiKhoan` — xem sao kê chi tiết 1 tài khoản
+
+> **Lưu ý:** Script `11_TaoTaiKhoanKhachHang_Demo.sql` phải được chạy trên **từng SQL instance** (SQL1, SQL2) vì SQL Login là server-level object — không replicate tự động.
 
 ---
 
@@ -71,11 +85,14 @@ Chạy lần lượt các script sau (từ thư mục gốc project):
 -- Bước 1: Tạo Roles và phân quyền
 sqlcmd -S "TEN_SERVER" -E -i "sql\setup\04_Role_PhanQuyen.sql"
 
--- Bước 2: Tạo tài khoản Admin
+-- Bước 2: Tạo tài khoản Admin (chạy trên SQL1, SQL2, SQL3)
 sqlcmd -S "TEN_SERVER" -E -i "sql\setup\09_TaoTaiKhoanAdmin.sql"
 
 -- Bước 3: Tạo tài khoản Nhân viên demo
 sqlcmd -S "TEN_SERVER" -E -i "sql\setup\10_TaoTaiKhoanNhanVien_Demo.sql"
+
+-- Bước 4: Tạo tài khoản Khách hàng demo (chạy trên SQL1 và SQL2)
+sqlcmd -S "TEN_SERVER" -E -i "sql\setup\11_TaoTaiKhoanKhachHang_Demo.sql"
 ```
 
 Hoặc chạy `run_all.bat` để deploy toàn bộ lên 4 SQL Server cùng lúc.

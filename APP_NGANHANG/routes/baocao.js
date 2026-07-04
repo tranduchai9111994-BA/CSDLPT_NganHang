@@ -87,7 +87,7 @@ router.post('/saoke', async (req, res) => {
         return {
           ...gd,
           SOTK: SOTK,
-          NGAYGD: new Date(gd.NGAYGD).toLocaleDateString('vi-VN'),
+          NGAYGD: gd.NGAYGD,
           LoaiGD: gd.LOAIGD, SoTien: gd.SOTIEN,
           SoDuDau: gd.SODU_LUYKE - (isVao ? gd.SOTIEN : -gd.SOTIEN),
           SoDuSau: gd.SODU_LUYKE, TienVao: isVao ? gd.SOTIEN : 0

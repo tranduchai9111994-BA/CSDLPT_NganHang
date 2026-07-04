@@ -84,57 +84,23 @@ router.post('/taotaikhoan', async (req, res) => {
   }
 
   try {
-    const safeLogin = loginname.replace(/]/g, ']]');
-    const safeUser  = username.replace(/]/g, ']]');
-    const safePass  = password.replace(/'/g, "''");
-    const safeRole  = role.replace(/'/g, "''");
     const loaiTk = role === 'KhachHang' ? 'KhachHang' : 'NhanVien';
 
-    // Tạo login/user trên TẤT CẢ server (để user có thể query cross-server)
+    // Gọi SP_TaoTaiKhoan trên TẤT CẢ server (SP idempotent — skip nếu đã có)
     const serverKeys = ['BENTHANH', 'TANDINH', 'TRACUU'];
     const errors = [];
 
     for (const srvKey of serverKeys) {
       try {
         const pool = await getAdminPool(srvKey);
-
-        // Tạo LOGIN nếu chưa có
-        const loginExists = await pool.request()
-          .input('LN', sql.VarChar, loginname)
-          .query(`SELECT 1 FROM sys.server_principals WHERE name = @LN`);
-        if (loginExists.recordset.length === 0) {
-          await pool.request().query(
-            `CREATE LOGIN [${safeLogin}] WITH PASSWORD = '${safePass}', CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF`
-          );
-        }
-
-        // Tạo USER nếu chưa có
-        const userExists = await pool.request()
-          .input('UN', sql.VarChar, username)
-          .query(`SELECT 1 FROM sys.database_principals WHERE name = @UN`);
-        if (userExists.recordset.length === 0) {
-          await pool.request().query(`CREATE USER [${safeUser}] FOR LOGIN [${safeLogin}]`);
-        }
-
-        // Gán role
-        await pool.request().query(`EXEC sp_addrolemember '${safeRole}', [${safeUser}]`);
-
-        // INSERT QuanTriLogin trên tất cả server (để lưới hiển thị đúng khi query bất kỳ server nào)
-        const qtlExists = await pool.request()
-          .input('LN2', sql.VarChar, loginname)
-          .query(`SELECT 1 FROM dbo.QuanTriLogin WHERE LoginName = @LN2`);
-        if (qtlExists.recordset.length === 0) {
-          await pool.request()
-            .input('LoginName',    sql.VarChar, loginname)
-            .input('MatKhau',      sql.VarChar, password)
-            .input('LoaiTaiKhoan', sql.VarChar, loaiTk)
-            .input('MaThamChieu',  sql.VarChar, username)
-            .input('NhomQuyen',    sql.VarChar, role)
-            .query(`
-              INSERT INTO dbo.QuanTriLogin (LoginName, MatKhauHienTai, LoaiTaiKhoan, MaThamChieu, NhomQuyen, NgayTao)
-              VALUES (@LoginName, @MatKhau, @LoaiTaiKhoan, @MaThamChieu, @NhomQuyen, GETDATE())
-            `);
-        }
+        await pool.request()
+          .input('LGNAME',      sql.VarChar(50), loginname)
+          .input('PASS',        sql.VarChar(50), password)
+          .input('USERNAME',    sql.VarChar(50), username)
+          .input('ROLE',        sql.VarChar(50), role)
+          .input('LOAITK',      sql.VarChar(20), loaiTk)
+          .input('MATHAMCHIEU', sql.VarChar(50), username)
+          .execute('SP_TaoTaiKhoan');
 
         console.log(`[TaoTK] ${srvKey}: OK`);
       } catch (srvErr) {
@@ -242,10 +208,31 @@ router.post('/login-management/reset-password', requireNganHang, async (req, res
         const exists = await pool.request()
           .input('LN', sql.VarChar, loginName)
           .query(`SELECT 1 FROM sys.server_principals WHERE name = @LN`);
-        if (exists.recordset.length > 0) {
-          // DROP + CREATE để tránh replication trigger chặn ALTER LOGIN
-          await pool.request().query(`DROP LOGIN [${safeLogin}]`);
-          await pool.request().query(`CREATE LOGIN [${safeLogin}] WITH PASSWORD = '${safePass}', CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF`);
+        if (exists.recordset.length === 0) continue;
+
+        // Lấy thông tin DB user + role từ QuanTriLogin trước khi DROP login
+        // (DROP LOGIN sẽ đổi SID → DB User bị orphaned nếu không re-create)
+        const qtlRes = await pool.request()
+          .input('LN2', sql.VarChar, loginName)
+          .query(`SELECT MaThamChieu, NhomQuyen FROM dbo.QuanTriLogin WHERE LoginName = @LN2`);
+        const qtl = qtlRes.recordset[0];
+
+        // DROP + CREATE để tránh replication trigger chặn ALTER LOGIN
+        await pool.request().query(`DROP LOGIN [${safeLogin}]`);
+        await pool.request().query(`CREATE LOGIN [${safeLogin}] WITH PASSWORD = '${safePass}', CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF`);
+
+        // Re-link DB User: DROP+CREATE login đổi SID → user cũ bị orphaned → mất quyền
+        if (qtl) {
+          const safeUser = qtl.MaThamChieu.replace(/]/g, ']]');
+          const safeRole = qtl.NhomQuyen.replace(/'/g, "''");
+          const userExists = await pool.request()
+            .input('UN', sql.VarChar, qtl.MaThamChieu)
+            .query(`SELECT 1 FROM sys.database_principals WHERE name = @UN`);
+          if (userExists.recordset.length > 0) {
+            await pool.request().query(`DROP USER [${safeUser}]`);
+          }
+          await pool.request().query(`CREATE USER [${safeUser}] FOR LOGIN [${safeLogin}]`);
+          await pool.request().query(`EXEC sp_addrolemember '${safeRole}', [${safeUser}]`);
         }
       } catch (e) {
         console.error(`[ResetMK] ${srvKey}: ${e.message}`);

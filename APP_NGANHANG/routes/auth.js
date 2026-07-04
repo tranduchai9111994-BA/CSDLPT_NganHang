@@ -46,7 +46,7 @@ router.post('/login', async (req, res) => {
 
     const request = poolUser.request();
     request.input('LoginName', sql.NVarChar, username);
-    
+
     let loginResult;
     try {
       loginResult = await request.execute('sp_Login_App');

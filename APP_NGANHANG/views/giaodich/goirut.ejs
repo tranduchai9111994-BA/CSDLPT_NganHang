@@ -97,18 +97,18 @@ select.tk-select:focus { outline: none; border-color: #0d6efd; box-shadow: 0 0 0
 
 <!-- TABS -->
 <div class="gr-tabs">
-  <div class="gr-tab active-gui" id="tab-gui" onclick="switchTab('gui')">⬆ Gửi tiền</div>
-  <div class="gr-tab" id="tab-rut" onclick="switchTab('rut')">⬇ Rút tiền</div>
+  <div class="gr-tab <%= (typeof activeTab === 'undefined' || activeTab === 'gui') ? 'active-gui' : '' %>" id="tab-gui" onclick="switchTab('gui')">⬆ Gửi tiền</div>
+  <div class="gr-tab <%= (typeof activeTab !== 'undefined' && activeTab === 'rut') ? 'active-rut' : '' %>" id="tab-rut" onclick="switchTab('rut')">⬇ Rút tiền</div>
 </div>
 
 <!-- PANEL GỬI -->
-<div class="gr-panel panel-gui show" id="panel-gui">
+<div class="gr-panel panel-gui<%= (typeof activeTab === 'undefined' || activeTab === 'gui') ? ' show' : '' %>" id="panel-gui">
   <form method="POST" action="/giaodich/guitien" onsubmit="return submitMoney('hidden-gui','display-gui')">
     <label style="font-size:13px;font-weight:600;color:#555;display:block;margin-bottom:6px;">Số tài khoản</label>
     <select name="SOTK" id="sotk-gui" class="tk-select" onchange="loadSoDu(this,'sodu-gui','gui')" required>
       <option value="">-- Chọn tài khoản --</option>
       <% tkRows.forEach(tk => { %>
-        <option value="<%= tk.SOTK %>"><%= tk.SOTK %></option>
+        <option value="<%= tk.SOTK %>" <%= (typeof prevSOTK !== 'undefined' && prevSOTK === tk.SOTK && (typeof activeTab === 'undefined' || activeTab === 'gui')) ? 'selected' : '' %>><%= tk.SOTK %></option>
       <% }) %>
     </select>
 
@@ -124,23 +124,24 @@ select.tk-select:focus { outline: none; border-color: #0d6efd; box-shadow: 0 0 0
     <div class="money-wrap" style="margin-bottom:4px;">
       <input type="text" id="display-gui" placeholder="100.000" required
              oninput="formatMoneyInput(this,'hidden-gui')"
-             onkeypress="return isDigit(event)">
+             onkeypress="return isDigit(event)"
+             value="<%= (typeof prevSOTIEN !== 'undefined' && prevSOTIEN && (typeof activeTab === 'undefined' || activeTab === 'gui')) ? Number(prevSOTIEN).toLocaleString('vi-VN') : '' %>">
       <span class="cur">VNĐ</span>
     </div>
     <div class="hint">Tối thiểu 100.000 VNĐ</div>
-    <input type="hidden" name="SOTIEN" id="hidden-gui">
+    <input type="hidden" name="SOTIEN" id="hidden-gui" value="<%= (typeof prevSOTIEN !== 'undefined' && (typeof activeTab === 'undefined' || activeTab === 'gui')) ? prevSOTIEN : '' %>">
     <button type="submit" class="btn-gui">Gửi tiền</button>
   </form>
 </div>
 
 <!-- PANEL RÚT -->
-<div class="gr-panel panel-rut" id="panel-rut">
+<div class="gr-panel panel-rut<%= (typeof activeTab !== 'undefined' && activeTab === 'rut') ? ' show' : '' %>" id="panel-rut">
   <form method="POST" action="/giaodich/ruttien" onsubmit="return submitMoney('hidden-rut','display-rut')">
     <label style="font-size:13px;font-weight:600;color:#555;display:block;margin-bottom:6px;">Số tài khoản</label>
     <select name="SOTK" id="sotk-rut" class="tk-select" onchange="loadSoDu(this,'sodu-rut','rut')" required>
       <option value="">-- Chọn tài khoản --</option>
       <% tkRows.forEach(tk => { %>
-        <option value="<%= tk.SOTK %>"><%= tk.SOTK %></option>
+        <option value="<%= tk.SOTK %>" <%= (typeof prevSOTK !== 'undefined' && prevSOTK === tk.SOTK && typeof activeTab !== 'undefined' && activeTab === 'rut') ? 'selected' : '' %>><%= tk.SOTK %></option>
       <% }) %>
     </select>
 
@@ -156,11 +157,12 @@ select.tk-select:focus { outline: none; border-color: #0d6efd; box-shadow: 0 0 0
     <div class="money-wrap" style="margin-bottom:4px;">
       <input type="text" id="display-rut" placeholder="100.000" required
              oninput="formatMoneyInput(this,'hidden-rut')"
-             onkeypress="return isDigit(event)">
+             onkeypress="return isDigit(event)"
+             value="<%= (typeof prevSOTIEN !== 'undefined' && prevSOTIEN && typeof activeTab !== 'undefined' && activeTab === 'rut') ? Number(prevSOTIEN).toLocaleString('vi-VN') : '' %>">
       <span class="cur">VNĐ</span>
     </div>
     <div class="hint">Tối thiểu 100.000 VNĐ</div>
-    <input type="hidden" name="SOTIEN" id="hidden-rut">
+    <input type="hidden" name="SOTIEN" id="hidden-rut" value="<%= (typeof prevSOTIEN !== 'undefined' && typeof activeTab !== 'undefined' && activeTab === 'rut') ? prevSOTIEN : '' %>">
     <button type="submit" class="btn-rut">Rút tiền</button>
   </form>
 </div>
@@ -206,4 +208,18 @@ function submitMoney(hiddenId, displayId) {
   }
   return true;
 }
+
+// Auto-restore số dư khi server render lại form với SOTK đã chọn
+(function restoreState() {
+  const activeTab = '<%= typeof activeTab !== "undefined" ? activeTab : "gui" %>';
+  const prevSOTK  = '<%= typeof prevSOTK !== "undefined" ? prevSOTK : "" %>';
+  if (!prevSOTK) return;
+  if (activeTab === 'gui') {
+    const sel = document.getElementById('sotk-gui');
+    if (sel && sel.value) loadSoDu(sel, 'sodu-gui', 'gui');
+  } else if (activeTab === 'rut') {
+    const sel = document.getElementById('sotk-rut');
+    if (sel && sel.value) loadSoDu(sel, 'sodu-rut', 'rut');
+  }
+})();
 </script>

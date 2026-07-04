@@ -54,16 +54,24 @@ BEGIN
     IF @NHOM != 'KhachHang'
     BEGIN
         -- Bước 3a: Tìm nhân viên đang làm việc (TrangThaiXoa = 0) có MANV khớp
-        SELECT @MANV = MANV, @HOTEN = RTRIM(HO) + ' ' + RTRIM(TEN), @MACN = MACN
-        FROM NhanVien
-        WHERE RTRIM(MANV) = @DBUserName AND TrangThaiXoa = 0;
+        -- SQL3/TRACUU không có bảng NhanVien → bỏ qua bước này
+        IF OBJECT_ID('dbo.NhanVien', 'U') IS NOT NULL
+        BEGIN
+            SELECT @MANV = MANV, @HOTEN = RTRIM(HO) + ' ' + RTRIM(TEN), @MACN = MACN
+            FROM NhanVien
+            WHERE RTRIM(MANV) = @DBUserName AND TrangThaiXoa = 0;
+        END
 
         -- Bước 3b: Nếu không tìm thấy NV nhưng role là NganHang → đây là admin (Ban Giám Đốc)
         IF @MANV IS NULL AND @NHOM = 'NganHang'
         BEGIN
             SET @MANV = @DBUserName;
             SET @HOTEN = N'Quan Tri Vien (Ban Giam Doc)';
-            SET @MACN = (SELECT TOP 1 MACN FROM ChiNhanh);
+            -- SQL3/TRACUU không có bảng ChiNhanh → hardcode MACN = 'TRACUU'
+            IF OBJECT_ID('dbo.ChiNhanh', 'U') IS NOT NULL
+                SET @MACN = (SELECT TOP 1 MACN FROM ChiNhanh);
+            ELSE
+                SET @MACN = N'TRACUU';
         END
     END
     ELSE

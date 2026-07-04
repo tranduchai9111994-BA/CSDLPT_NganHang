@@ -2,10 +2,9 @@ USE NGANHANG;
 GO
 
 -- Đồng bộ với bản deployed trong setup_db.js (alterSpTaoTaiKhoanNguon).
--- Thay đổi so với phiên bản cũ (4 params):
---   - Thêm @LOAITK, @MATHAMCHIEU để ghi vào QuanTriLogin ngay trong SP
---   - WITH EXECUTE AS OWNER để có quyền tạo Login/User cấp Server
---   - Dùng QUOTENAME + REPLACE thay vì nối chuỗi trực tiếp (giảm rủi ro injection)
+-- Yêu cầu: Caller phải có Server Role [securityadmin] để CREATE LOGIN.
+-- Dùng QUOTENAME + REPLACE thay vì nối chuỗi trực tiếp (giảm rủi ro injection).
+-- SP là idempotent: chạy lại trên cùng server không lỗi (IF NOT EXISTS trước mỗi bước).
 CREATE OR ALTER PROCEDURE [dbo].[SP_TaoTaiKhoan]
     @LGNAME      VARCHAR(50),
     @PASS        VARCHAR(50),
@@ -13,74 +12,51 @@ CREATE OR ALTER PROCEDURE [dbo].[SP_TaoTaiKhoan]
     @ROLE        VARCHAR(50),
     @LOAITK      VARCHAR(20),
     @MATHAMCHIEU VARCHAR(50)
-WITH EXECUTE AS OWNER
 AS
 BEGIN
     SET NOCOUNT ON;
-
-    -- ==========================================================================
-    -- BƯỚC 1: KIỂM TRA LOGIN NAME CHƯA TỒN TẠI TRÊN SERVER
-    -- Mục đích: Tránh tạo trùng Login ở cấp SQL Server instance
-    -- ==========================================================================
-    IF EXISTS(SELECT 1 FROM sys.server_principals WHERE name = @LGNAME)
-    BEGIN
-        RAISERROR('Login name is already in use', 16, 1);
-        RETURN 1;
-    END
-
-    -- ==========================================================================
-    -- BƯỚC 2: KIỂM TRA USER NAME CHƯA TỒN TẠI TRONG DATABASE
-    -- Mục đích: Tránh tạo trùng User ở cấp database NGANHANG
-    -- ==========================================================================
-    IF EXISTS(SELECT 1 FROM sys.database_principals WHERE name = @USERNAME)
-    BEGIN
-        RAISERROR('User name is already in use in the current database', 16, 1);
-        RETURN 2;
-    END
 
     BEGIN TRY
         DECLARE @SqlStr VARCHAR(MAX);
         DECLARE @PassEscaped VARCHAR(50) = REPLACE(@PASS, '''', '''''');
 
         -- ==========================================================================
-        -- BƯỚC 3: TẠO LOGIN CẤP SERVER
-        -- Mục đích: Tạo SQL Login để người dùng có thể đăng nhập vào SQL Server
-        -- Dùng QUOTENAME để tránh SQL injection qua tên login
+        -- BƯỚC 1: TẠO LOGIN NẾU CHƯA TỒN TẠI
+        -- Idempotent: chạy trên nhiều server, login có thể đã có → skip
         -- ==========================================================================
-        SET @SqlStr = 'CREATE LOGIN ' + QUOTENAME(@LGNAME) + ' WITH PASSWORD = ''' + @PassEscaped + ''', CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF;';
-        EXEC(@SqlStr);
+        IF NOT EXISTS(SELECT 1 FROM sys.server_principals WHERE name = @LGNAME)
+        BEGIN
+            SET @SqlStr = 'CREATE LOGIN ' + QUOTENAME(@LGNAME) + ' WITH PASSWORD = ''' + @PassEscaped + ''', CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF;';
+            EXEC(@SqlStr);
+        END
 
         -- ==========================================================================
-        -- BƯỚC 4: TẠO USER CẤP DATABASE VÀ MAP VỚI LOGIN
-        -- Mục đích: Tạo Database User liên kết với Login vừa tạo ở bước 3
+        -- BƯỚC 2: TẠO USER NẾU CHƯA TỒN TẠI VÀ MAP VỚI LOGIN
         -- ==========================================================================
-        SET @SqlStr = 'CREATE USER ' + QUOTENAME(@USERNAME) + ' FOR LOGIN ' + QUOTENAME(@LGNAME) + ';';
-        EXEC(@SqlStr);
+        IF NOT EXISTS(SELECT 1 FROM sys.database_principals WHERE name = @USERNAME)
+        BEGIN
+            SET @SqlStr = 'CREATE USER ' + QUOTENAME(@USERNAME) + ' FOR LOGIN ' + QUOTENAME(@LGNAME) + ';';
+            EXEC(@SqlStr);
+        END
 
         -- ==========================================================================
-        -- BƯỚC 5: GÁN ROLE (PHÂN QUYỀN)
-        -- Mục đích: Thêm User vào role tương ứng (NganHang, ChiNhanh, KhachHang)
-        -- Role quyết định user được phép làm gì trong hệ thống
+        -- BƯỚC 3: GÁN ROLE (PHÂN QUYỀN)
+        -- sp_addrolemember tự bỏ qua nếu user đã thuộc role → an toàn gọi lại
         -- ==========================================================================
         SET @SqlStr = 'EXEC sp_addrolemember ''' + REPLACE(@ROLE, '''', '''''') + ''', ' + QUOTENAME(@USERNAME) + ';';
         EXEC(@SqlStr);
 
         -- ==========================================================================
-        -- BƯỚC 6: GHI THÔNG TIN VÀO BẢNG QUẢN TRỊ LOGIN
-        -- Mục đích: Lưu metadata (login, loại TK, mã tham chiếu, nhóm quyền)
-        -- để quản lý và tra cứu trạng thái tài khoản từ giao diện ứng dụng
+        -- BƯỚC 4: GHI THÔNG TIN VÀO BẢNG QUẢN TRỊ LOGIN (NẾU CHƯA CÓ)
         -- ==========================================================================
-        INSERT INTO dbo.QuanTriLogin (LoginName, MatKhauHienTai, LoaiTaiKhoan, MaThamChieu, NhomQuyen, NgayTao)
-        VALUES (@LGNAME, @PASS, @LOAITK, @MATHAMCHIEU, @ROLE, GETDATE());
+        IF NOT EXISTS(SELECT 1 FROM dbo.QuanTriLogin WHERE LoginName = @LGNAME)
+        BEGIN
+            INSERT INTO dbo.QuanTriLogin (LoginName, MatKhauHienTai, LoaiTaiKhoan, MaThamChieu, NhomQuyen, NgayTao)
+            VALUES (@LGNAME, @PASS, @LOAITK, @MATHAMCHIEU, @ROLE, GETDATE());
+        END
 
         RETURN 0;
 
-    -- ==========================================================================
-    -- BƯỚC 7: XỬ LÝ LỖI
-    -- Mục đích: Nếu bất kỳ bước nào lỗi → ném lại lỗi cho app xử lý
-    -- Lưu ý: Các bước CREATE LOGIN/USER không nằm trong transaction tường minh
-    -- nên nếu lỗi giữa chừng có thể cần cleanup thủ công
-    -- ==========================================================================
     END TRY
     BEGIN CATCH
         DECLARE @ErrMsg nvarchar(4000) = ERROR_MESSAGE();

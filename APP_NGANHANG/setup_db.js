@@ -56,15 +56,23 @@ BEGIN
 
     IF @NHOM != 'KhachHang'
     BEGIN
-        SELECT @MANV = MANV, @HOTEN = RTRIM(HO) + ' ' + RTRIM(TEN), @MACN = MACN
-        FROM NhanVien
-        WHERE RTRIM(MANV) = @DBUserName AND TrangThaiXoa = 0;
+        -- SQL3/TRACUU không có bảng NhanVien → bỏ qua bước này
+        IF OBJECT_ID('dbo.NhanVien', 'U') IS NOT NULL
+        BEGIN
+            SELECT @MANV = MANV, @HOTEN = RTRIM(HO) + ' ' + RTRIM(TEN), @MACN = MACN
+            FROM NhanVien
+            WHERE RTRIM(MANV) = @DBUserName AND TrangThaiXoa = 0;
+        END
 
         IF @MANV IS NULL AND @NHOM = 'NganHang'
         BEGIN
             SET @MANV = @DBUserName;
             SET @HOTEN = N'Quan Tri Vien (Ban Giam Doc)';
-            SET @MACN = (SELECT TOP 1 MACN FROM ChiNhanh);
+            -- SQL3/TRACUU không có bảng ChiNhanh → hardcode MACN = 'TRACUU'
+            IF OBJECT_ID('dbo.ChiNhanh', 'U') IS NOT NULL
+                SET @MACN = (SELECT TOP 1 MACN FROM ChiNhanh);
+            ELSE
+                SET @MACN = N'TRACUU';
         END
     END
     ELSE
@@ -238,44 +246,40 @@ IF OBJECT_ID('dbo.SP_TaoTaiKhoan', 'P') IS NULL
 
 const alterSpTaoTaiKhoanNguon = `
 ALTER PROCEDURE [dbo].[SP_TaoTaiKhoan]
-    @LGNAME   VARCHAR(50), 
-    @PASS     VARCHAR(50), 
-    @USERNAME VARCHAR(50), 
+    @LGNAME   VARCHAR(50),
+    @PASS     VARCHAR(50),
+    @USERNAME VARCHAR(50),
     @ROLE     VARCHAR(50),
     @LOAITK   VARCHAR(20),
     @MATHAMCHIEU VARCHAR(50)
-WITH EXECUTE AS OWNER
 AS
 BEGIN
     SET NOCOUNT ON;
-
-    IF EXISTS(SELECT 1 FROM sys.server_principals WHERE name = @LGNAME)
-    BEGIN
-        RAISERROR('Login name is already in use', 16, 1);
-        RETURN 1;
-    END
-
-    IF EXISTS(SELECT 1 FROM sys.database_principals WHERE name = @USERNAME)
-    BEGIN
-        RAISERROR('User name is already in use in the current database', 16, 1);
-        RETURN 2;
-    END
 
     BEGIN TRY
         DECLARE @SqlStr VARCHAR(MAX);
         DECLARE @PassEscaped VARCHAR(50) = REPLACE(@PASS, '''', '''''');
 
-        SET @SqlStr = 'CREATE LOGIN ' + QUOTENAME(@LGNAME) + ' WITH PASSWORD = ''' + @PassEscaped + ''', CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF;';
-        EXEC(@SqlStr);
+        IF NOT EXISTS(SELECT 1 FROM sys.server_principals WHERE name = @LGNAME)
+        BEGIN
+            SET @SqlStr = 'CREATE LOGIN ' + QUOTENAME(@LGNAME) + ' WITH PASSWORD = ''' + @PassEscaped + ''', CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF;';
+            EXEC(@SqlStr);
+        END
 
-        SET @SqlStr = 'CREATE USER ' + QUOTENAME(@USERNAME) + ' FOR LOGIN ' + QUOTENAME(@LGNAME) + ';';
-        EXEC(@SqlStr);
+        IF NOT EXISTS(SELECT 1 FROM sys.database_principals WHERE name = @USERNAME)
+        BEGIN
+            SET @SqlStr = 'CREATE USER ' + QUOTENAME(@USERNAME) + ' FOR LOGIN ' + QUOTENAME(@LGNAME) + ';';
+            EXEC(@SqlStr);
+        END
 
         SET @SqlStr = 'EXEC sp_addrolemember ''' + REPLACE(@ROLE, '''', '''''') + ''', ' + QUOTENAME(@USERNAME) + ';';
         EXEC(@SqlStr);
 
-        INSERT INTO dbo.QuanTriLogin (LoginName, MatKhauHienTai, LoaiTaiKhoan, MaThamChieu, NhomQuyen, NgayTao)
-        VALUES (@LGNAME, @PASS, @LOAITK, @MATHAMCHIEU, @ROLE, GETDATE());
+        IF NOT EXISTS(SELECT 1 FROM dbo.QuanTriLogin WHERE LoginName = @LGNAME)
+        BEGIN
+            INSERT INTO dbo.QuanTriLogin (LoginName, MatKhauHienTai, LoaiTaiKhoan, MaThamChieu, NhomQuyen, NgayTao)
+            VALUES (@LGNAME, @PASS, @LOAITK, @MATHAMCHIEU, @ROLE, GETDATE());
+        END
 
         RETURN 0;
     END TRY
@@ -519,10 +523,18 @@ async function executeScripts() {
 
             console.log(`[${key}] Đang tạo Table và SP cơ sở...`);
             await pool.request().batch(createTablesAndLocalSPs);
-            await pool.request().batch(alterSpLoginApp);
-            await pool.request().batch(alterSpLoginAppPermissions);
-            await pool.request().batch(alterSpResetMatKhau);
-            await pool.request().batch(alterSpResetMatKhauPermissions);
+            // TRACUU là Replication Subscriber → DDL trigger của Merge Replication chặn ALTER PROCEDURE.
+            // Giải pháp: tắt tạm DDL trigger trước khi deploy SP, bật lại sau.
+            // (Đây là cách chính xác khi không có Publisher chuyên dụng trong hệ thống demo.)
+            // sp_Login_App + sp_ResetMatKhau: chỉ deploy trên NGUON (Publisher ES-HAITD16).
+            // Replication tự đồng bộ xuống SQL1/SQL2/SQL3 — không deploy trực tiếp lên Subscriber
+            // vì MSmerge_tr_alterschemasonly (system trigger) chặn DDL trên Subscriber.
+            if (key === 'NGUON') {
+                await pool.request().batch(alterSpLoginApp);
+                await pool.request().batch(alterSpLoginAppPermissions);
+                await pool.request().batch(alterSpResetMatKhau);
+                await pool.request().batch(alterSpResetMatKhauPermissions);
+            }
             
             await pool.request().batch(createSpXoaLoiDongBo);
             await pool.request().batch(alterSpXoaLoiDongBo);

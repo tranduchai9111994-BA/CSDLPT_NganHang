@@ -11,21 +11,25 @@ function getServer(req) { return req.session.user.SERVER || 'BENTHANH'; }
 
 // GET /giaodich/goirut
 router.get('/goirut', async (req, res) => {
+  await renderGoiRut(req, res, {
+    error: req.query.error || null,
+    success: req.query.success || null
+  });
+});
+
+async function renderGoiRut(req, res, { error = null, success = null, activeTab = 'gui', prevSOTK = '', prevSOTIEN = '' } = {}) {
   const server = getServer(req);
   const user   = req.session.user;
   try {
-    // Lấy danh sách TK thuộc chi nhánh (để chọn)
     const tkRows = await querySQL(req, server, `
       SELECT RTRIM(SOTK) AS SOTK, SODU, RTRIM(CMND) AS CMND
       FROM TaiKhoan WHERE RTRIM(MACN)=@macn
     `, { macn: user.MACN });
-    res.render('giaodich/goirut', {
-      tkRows, error: req.query.error || null, success: req.query.success || null
-    });
+    res.render('giaodich/goirut', { tkRows, error, success, activeTab, prevSOTK, prevSOTIEN });
   } catch (err) {
-    res.render('giaodich/goirut', { tkRows: [], error: err.message, success: null });
+    res.render('giaodich/goirut', { tkRows: [], error: err.message, success: null, activeTab, prevSOTK, prevSOTIEN });
   }
-});
+}
 
 // POST /giaodich/guitien
 router.post('/guitien', async (req, res) => {
@@ -40,7 +44,7 @@ router.post('/guitien', async (req, res) => {
     });
     res.redirect('/giaodich/goirut?success=Gửi tiền thành công! Số tiền: ' + Number(SOTIEN).toLocaleString('vi-VN') + ' VNĐ');
   } catch (err) {
-    res.redirect('/giaodich/goirut?error=' + encodeURIComponent(err.message));
+    await renderGoiRut(req, res, { error: err.message, activeTab: 'gui', prevSOTK: SOTK, prevSOTIEN: SOTIEN });
   }
 });
 
@@ -57,7 +61,7 @@ router.post('/ruttien', async (req, res) => {
     });
     res.redirect('/giaodich/goirut?success=Rút tiền thành công! Số tiền: ' + Number(SOTIEN).toLocaleString('vi-VN') + ' VNĐ');
   } catch (err) {
-    res.redirect('/giaodich/goirut?error=' + encodeURIComponent(err.message));
+    await renderGoiRut(req, res, { error: err.message, activeTab: 'rut', prevSOTK: SOTK, prevSOTIEN: SOTIEN });
   }
 });
 

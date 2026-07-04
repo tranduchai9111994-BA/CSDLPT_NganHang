@@ -2,6 +2,23 @@
 
 <% if (error) { %><div class="alert alert-error">❌ <%= error %></div><% } %>
 
+<%
+function fmtDate(val) {
+  if (!val) return '';
+  // Nếu là Date object (từ SQL Server trả về) → dùng UTC để tránh lệch timezone
+  if (val instanceof Date) {
+    const dd = String(val.getUTCDate()).padStart(2,'0');
+    const mm = String(val.getUTCMonth()+1).padStart(2,'0');
+    return dd + '/' + mm + '/' + val.getUTCFullYear();
+  }
+  // Nếu là string dạng 'yyyy-mm-dd' hoặc 'yyyy-mm-ddTHH:MM:SS...' → tách trực tiếp
+  const s = String(val);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return m[3] + '/' + m[2] + '/' + m[1];
+  return s;
+}
+%>
+
 <div class="form-card" style="margin-bottom:20px;">
   <form method="POST" action="/baocao/saoke" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
     <div class="form-group" style="flex:1;min-width:140px;">
@@ -30,9 +47,9 @@
 <% if (rows) { %>
 
 <% if (showSodu) { %>
-<div style="background:white;padding:14px 18px;border-radius:6px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.1);">
-  <div style="display:flex;justify-content:space-between;">
-    <span>📌 <strong>Số dư đầu kỳ (trước <%= query.TUNGAY %>):</strong></span>
+<div style="background:white;padding:10px 16px;border-radius:6px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.1);">
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <span>📌 <strong>Số dư đầu kỳ (trước <%= fmtDate(query.TUNGAY) %>):</strong></span>
     <span class="money money-positive"><strong><%= Number(sodu_dau).toLocaleString('vi-VN') %> VNĐ</strong></span>
   </div>
 </div>
@@ -41,25 +58,25 @@
 <table>
   <thead>
     <tr>
-      <th>#</th>
+      <th style="width:40px">#</th>
       <% if (!query.SOTK) { %><th>Số TK</th><% } %>
-      <% if (showSodu) { %><th class="money">Số dư đầu</th><% } %>
-      <th>Ngày GD</th>
-      <th>Loại GD</th>
-      <th class="money">Số tiền</th>
-      <% if (showSodu) { %><th class="money">Số dư sau</th><% } %>
+      <% if (showSodu) { %><th class="money" style="width:130px">Số dư đầu</th><% } %>
+      <th style="width:100px">Ngày GD</th>
+      <th style="width:80px">Loại GD</th>
+      <th class="money" style="width:120px">Số tiền</th>
+      <% if (showSodu) { %><th class="money" style="width:130px">Số dư sau</th><% } %>
     </tr>
   </thead>
   <tbody>
     <% if (rows.length === 0) { %>
-      <tr><td colspan="7" style="text-align:center;color:#6c757d;">Không có giao dịch trong kỳ</td></tr>
+      <tr><td colspan="7" style="text-align:center;color:#6c757d;padding:20px;">Không có giao dịch trong kỳ</td></tr>
     <% } %>
     <% rows.forEach((r, i) => { %>
     <tr>
       <td><%= i+1 %></td>
       <% if (!query.SOTK) { %><td><code><%= r.SOTK %></code></td><% } %>
       <% if (showSodu) { %><td class="money"><%= Number(r.SoDuDau).toLocaleString('vi-VN') %></td><% } %>
-      <td><%= r.NGAYGD %></td>
+      <td><%= fmtDate(r.NGAYGD) %></td>
       <td>
         <span class="badge <%= (r.TienVao > 0) ? 'badge-bn' : 'badge-td' %>">
           <%= r.LoaiGD %>
@@ -76,9 +93,9 @@
 <div style="color:#6c757d;font-size:12px;margin-top:6px;">Tổng: <%= rows.length %> giao dịch</div>
 
 <% if (showSodu) { %>
-<div style="background:white;padding:14px 18px;border-radius:6px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.1);">
-  <div style="display:flex;justify-content:space-between;">
-    <span>📌 <strong>Số dư cuối kỳ (đến <%= query.DENNGAY %>):</strong></span>
+<div style="background:white;padding:10px 16px;border-radius:6px;margin-top:10px;box-shadow:0 1px 4px rgba(0,0,0,.1);">
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <span>📌 <strong>Số dư cuối kỳ (đến <%= fmtDate(query.DENNGAY) %>):</strong></span>
     <span class="money money-positive"><strong><%= Number(sodu_cuoi).toLocaleString('vi-VN') %> VNĐ</strong></span>
   </div>
 </div>

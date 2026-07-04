@@ -34,7 +34,8 @@
 - **Phân mảnh ngang:** KhachHang, NhanVien, GD_GOIRUT, GD_CHUYENTIEN — theo `MACN`
 - **Nhân bản toàn vẹn:** `TaiKhoan` — mỗi site có đầy đủ TK của cả 2 chi nhánh (đọc local nhanh, GHI qua LINK1 nếu TK thuộc CN khác)
 - **Nhân bản toàn vẹn:** `ChiNhanh` — danh mục tham chiếu (trên SQL1/SQL2, SQL3 đã DROP)
-- **TRACUU (SQL3):** Chỉ có 2 bảng local: `KhachHang` (replicate full) + `QuanTriLogin` (local). NhanVien/TaiKhoan/GD đọc qua LINK1+LINK2 bằng SP đặc thù (`sp_DanhSachNhanVien`, `sp_LietKeTaiKhoanTheoNgay`, `SP_DanhSachTrangThaiLogin`)
+- **TRACUU (SQL3):** Chỉ có 2 bảng local: `KhachHang` (replicate full) + `QuanTriLogin` (local). 
+NhanVien/TaiKhoan/GD đọc qua LINK1+LINK2 bằng SP đặc thù (`sp_DanhSachNhanVien`, `sp_LietKeTaiKhoanTheoNgay`, `SP_DanhSachTrangThaiLogin`)
 - Linked Server: SQL1 có `LINK1` trỏ tới SQL2 (và ngược lại); SQL3 có `LINK1`→SQL1, `LINK2`→SQL2
 
 ---
@@ -50,9 +51,9 @@ Kiểm tra cơ chế đăng nhập dùng chính SQL Login (không dùng bảng u
 |----|-------|-----------------|
 | 01a | username=`BT001`, password=`1`, chi nhánh=`BENTHANH` | Đăng nhập thành công, NHOM=ChiNhanh, MACN=BENTHANH |
 | 01b | username=`BT001`, password=`saimat`, chi nhánh=`BENTHANH` | Lỗi: "Sai tài khoản hoặc mật khẩu" |
-| 01c | username=`TD001`, password=`1`, chi nhánh=`BENTHANH` | Lỗi: "Bạn không có quyền đăng nhập vào chi nhánh này!" |
-| 01d | username=`admin`, password=`1`, chi nhánh=`TRACUU` | Thành công, NHOM=NganHang |
-| 01e | username=*(CMND KH)*, password=*(PIN)*, chi nhánh=`BENTHANH` | Thành công, NHOM=KhachHang |
+| 01c | username=`TD001`, password=`1`, chi nhánh=`BENTHANH` | Lỗi: "Sai tài khoản hoặc mật khẩu" *(xem giải thích bên dưới)* |
+| 01d | username=`admin`, password=`1`, chi nhánh=`TRACUU` | Thành công, NHOM=NganHang, MACN=TRACUU *(xem giải thích bên dưới)* |
+| 01e | username=`1111111111`, password=`1`, chi nhánh=`BENTHANH` | Thành công, NHOM=KhachHang *(xem điều kiện tiên quyết bên dưới)* |
 
 ### Hệ thống xử lý chi tiết
 
@@ -90,7 +91,21 @@ JOIN sys.database_principals rp ON rm.role_principal_id = rp.principal_id
 WHERE dp.name = 'BT001';
 ```
 
-**Logic vấn đáp:** Hệ thống dùng SQL Authentication thật — login name = MANV hoặc CMND, mỗi SQL Server instance có riêng danh sách Login. `BT001` chỉ tồn tại trên SQL1, không tồn tại trên SQL2, nên không thể đăng nhập vào TANDINH. Đây là cách phân quyền tự nhiên nhất trong CSDL phân tán — quyền gắn liền với server chứa dữ liệu.
+**Logic vấn đáp:** Hệ thống dùng SQL Authentication thật — login name = MANV hoặc CMND, 
+mỗi SQL Server instance có riêng danh sách Login. `BT001` chỉ tồn tại trên SQL1, không tồn tại trên SQL2, nên không thể đăng nhập vào TANDINH. Đây là cách phân quyền tự nhiên nhất trong CSDL phân tán — quyền gắn liền với server chứa dữ liệu.
+
+**Giải thích 01d — admin đăng nhập TRACUU:**  
+`sp_Login_App` ban đầu query `FROM NhanVien` và `FROM ChiNhanh` — 2 bảng không tồn tại trên SQL3 → SP crash. Đã fix bằng cách thêm `OBJECT_ID` guard: khi chạy trên SQL3, bỏ qua query NhanVien và gán `MACN = 'TRACUU'` thay vì query ChiNhanh.  
+**Cách deploy:** Sửa SP trên Publisher (`ES-HAITD16`) → `sp_startpublication_snapshot` → `sp_reinitmergesubscription` → Merge Agent sync → SQL3 nhận SP mới qua replication (không DDL trực tiếp trên Subscriber).  
+**Điều kiện tiên quyết:** phải chạy [`09_TaoTaiKhoanAdmin.sql`](../sql/setup/09_TaoTaiKhoanAdmin.sql) trên **SQL3** (không chỉ SQL1/SQL2).
+
+**Giải thích 01e — KhachHang đăng nhập:**  
+KH login không được tạo tự động qua setup script. Phải chạy [`11_TaoTaiKhoanKhachHang_Demo.sql`](../sql/setup/11_TaoTaiKhoanKhachHang_Demo.sql) trên **SQL1** (cho KH BENTHANH) và **SQL2** (cho KH TANDINH) trước khi test.  
+Sau khi chạy: username = CMND (`1111111111`), password = `1`, chi nhánh = `BENTHANH`.
+
+**Giải thích 01c — tại sao không ra "không có quyền đăng nhập vào chi nhánh này":**  
+`TD001` chỉ tồn tại trên SQL2 (TANDINH). Khi chọn chi nhánh `BENTHANH`, hệ thống kết nối tới SQL1 bằng credentials `TD001`/`1` → SQL1 từ chối ngay (không có login này) → lỗi dừng ở **Bước 1**, chưa đến Bước 2 hay Bước 3.  
+Thông báo "Bạn không có quyền đăng nhập vào chi nhánh này!" chỉ xuất hiện khi user *tồn tại* trên server được chọn nhưng `MACN` trong DB lại khác chi nhánh đó — tình huống này không xảy ra trong thiết kế phân tán (mỗi nhân viên chỉ có SQL Login đúng server chi nhánh của mình).
 
 ### Điểm phân tán cần biết
 - Mỗi chi nhánh (SQL1, SQL2) có **SQL Login riêng** cho nhân viên của mình.
@@ -140,7 +155,10 @@ EXEC sp_DanhSachTaiKhoan;  -- Gộp từ LINK1 + LINK2
 SELECT * FROM TaiKhoan WHERE RTRIM(MACN) = 'BENTHANH';
 ```
 
-**Logic vấn đáp:** 3 nhóm user → 3 luồng query khác nhau. NganHang query trên TRACUU (SQL3) dùng SP gộp qua LINK1+LINK2 — đây là **tái cấu trúc (reconstruction)** trong CSDL phân tán. ChiNhanh chỉ query local. KhachHang dùng SP bắt buộc (không có quyền SELECT trực tiếp) — đảm bảo chỉ thấy TK của mình.
+**Logic vấn đáp:** 3 nhóm user → 3 luồng query khác nhau. 
+NganHang query trên TRACUU (SQL3) dùng SP gộp qua LINK1+LINK2 — đây là **tái cấu trúc (reconstruction)** trong CSDL phân tán. 
+ChiNhanh chỉ query local. 
+KhachHang dùng SP bắt buộc (không có quyền SELECT trực tiếp) — đảm bảo chỉ thấy TK của mình.
 
 ---
 
@@ -186,7 +204,9 @@ SELECT TOP 1 SOTK FROM TaiKhoan WHERE SOTK LIKE 'BT%' ORDER BY SOTK DESC;
 SELECT name, definition FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID('TaiKhoan');
 ```
 
-**Logic vấn đáp:** Prefix BT/TD đảm bảo **không bao giờ trùng SOTK** khi 2 site đồng thời INSERT (vì TaiKhoan nhân bản toàn vẹn). TK mới được INSERT tại site sở hữu (MACN khớp), Replication tự đồng bộ sang site đối tác. Đây là giải pháp tránh xung đột khóa chính trong CSDL phân tán.
+**Logic vấn đáp:** Prefix BT/TD đảm bảo **không bao giờ trùng SOTK** khi 2 site đồng thời INSERT (vì TaiKhoan nhân bản toàn vẹn). 
+TK mới được INSERT tại site sở hữu (MACN khớp), Replication tự đồng bộ sang site đối tác. 
+Đây là giải pháp tránh xung đột khóa chính trong CSDL phân tán.
 
 ---
 
@@ -200,7 +220,7 @@ Chuyển tiền khi cả 2 tài khoản đều nằm trên cùng 1 SQL Server.
 | ID | Input | Kết quả kỳ vọng |
 |----|-------|-----------------|
 | 04a | Chuyển BT0000001 → BT0000002, số tiền hợp lệ | Thành công, cả 2 SODU cập nhật |
-| 04b | Chuyển BT0000001 → BT0000002, SOTIEN=0 | Lỗi: "Số tiền chuyển phải lớn hơn 0" |
+| 04b | Chuyển BT0000001 → BT0000002, SOTIEN=0 | **Không thể nhập** — form tự xóa ô khi nhập `0`, nút Submit bị block bởi JS trước khi gửi request. SP không được gọi. |
 | 04c | Chuyển BT0000001 → BT0000002, SOTIEN > SODU | Lỗi: "Số dư không đủ" |
 | 04d | Chuyển BT0000001 → BT9999999 (không tồn tại) | Lỗi: "Tài khoản nhận không tồn tại" |
 
@@ -241,11 +261,13 @@ SELECT SOTK, SODU FROM TaiKhoan WHERE SOTK IN ('BT0000001', 'BT0000002');
 SELECT * FROM GD_CHUYENTIEN WHERE SOTK_CHUYEN = 'BT0000001' ORDER BY NGAYGD DESC;
 ```
 
-**Logic vấn đáp:** SP dùng `SET XACT_ABORT ON` + `BEGIN DISTRIBUTED TRANSACTION` → nếu BẤT KỲ lệnh nào fail → tự động ROLLBACK toàn bộ. Điều kiện `SODU >= @SOTIEN` trong WHERE của UPDATE đảm bảo atomic — không bao giờ số dư âm, ngay cả khi 2 giao dịch chạy đồng thời (row-level lock).
+**Logic vấn đáp:** SP dùng `SET XACT_ABORT ON` + `BEGIN DISTRIBUTED TRANSACTION` 
+→ nếu BẤT KỲ lệnh nào fail → tự động ROLLBACK toàn bộ. Điều kiện `SODU >= @SOTIEN` 
+trong WHERE của UPDATE đảm bảo atomic — không bao giờ số dư âm, ngay cả khi 2 giao dịch chạy đồng thời (row-level lock).
 
 ---
 
-## TC-05: Chuyển tiền liên chi nhánh (khác SQL Server)
+## TC-05: Chuyển tiền liên chi nhánh (khác SQL Server) 
 
 ### Mục tiêu
 Chuyển tiền khi TK nguồn và TK đích nằm trên 2 SQL Server khác nhau → phải qua MSDTC.
@@ -288,7 +310,8 @@ SELECT SOTK, SODU FROM TaiKhoan WHERE SOTK = 'TD0000001';
 
 **Logic vấn đáp:**
 - **MSDTC là gì?** → Microsoft Distributed Transaction Coordinator, quản lý giao dịch 2-phase commit (2PC) trên nhiều SQL Server.
-- **2-Phase Commit:** Phase 1 (PREPARE) — tất cả bên đồng ý commit; Phase 2 (COMMIT) — coordinator ra lệnh commit/rollback. Đảm bảo ACID dù giao dịch trải rộng nhiều node.
+- **2-Phase Commit:** Phase 1 (PREPARE) — tất cả bên đồng ý commit; Phase 2 (COMMIT) — coordinator ra lệnh commit/rollback. 
+Đảm bảo ACID dù giao dịch trải rộng nhiều node.
 - **Nếu SQL2 sập giữa chừng?** → MSDTC detect timeout ở PREPARE phase → gửi ROLLBACK → SQL1 hoàn trả lại.
 - **Tại sao dùng sqlcmd thay tedious?** → Driver tedious (Node.js) không hỗ trợ `BEGIN DISTRIBUTED TRANSACTION`; `sqlcmd` dùng SQL Server Native Client nên hỗ trợ MSDTC. Xem `db.js` hàm `execSP`.
 
@@ -303,7 +326,7 @@ SELECT SOTK, SODU FROM TaiKhoan WHERE SOTK = 'TD0000001';
 | 06a | Gửi BT0000001 số tiền 1,000,000 | SODU tăng, GD_GOIRUT có bản ghi LOAIGD='GT' |
 | 06b | Rút BT0000001 số tiền hợp lệ | SODU giảm, GD_GOIRUT có bản ghi LOAIGD='RT' |
 | 06c | Rút số tiền > SODU | SP RAISERROR, ROLLBACK |
-| 06d | Rút số tiền = 0 | SP RAISERROR "Số tiền không hợp lệ" |
+| 06d | Rút số tiền = 0 | **Không thể nhập** — form tự xóa ô khi nhập `0`, nút Submit bị block bởi JS (`submitMoney` alert "Số tiền tối thiểu là 100.000 VNĐ"). SP không được gọi. |
 
 ### Hệ thống xử lý chi tiết
 
@@ -344,12 +367,14 @@ Xem sao kê giao dịch trong khoảng ngày, kèm số dư lũy kế. Đây là
 
 ### Tình huống test
 
-| ID | Input | Kết quả kỳ vọng |
-|----|-------|-----------------|
-| 07a | SOTK=BT0000001, từ đầu tháng | Danh sách GD, SODU_LUYKE đúng sau mỗi GD |
-| 07b | SOTK=TD0000001 (TK ở SQL2, query từ SQL1) | SP đọc qua LINK1, vẫn trả về kết quả |
-| 07c | SOTK không tồn tại cả 2 nơi | Lỗi: "Tài khoản không tồn tại trên hệ thống" |
-| 07d | Khoảng ngày không có GD | Trả về rỗng, SODU_DAUKY = SODU_CUOIKY |
+| ID | Cách thực hiện | Input | Kết quả kỳ vọng |
+|----|----------------|-------|-----------------|
+| 07a | Login `BT001`/`1` → chi nhánh BENTHANH → Sao kê GD | SOTK=`BT0000001`, từ đầu tháng | Danh sách GD, SODU_LUYKE đúng sau mỗi GD |
+| 07b | Login `admin`/`1` → chi nhánh TRACUU → Sao kê GD | SOTK=`TD0000001` (TK thuộc SQL2, TRACUU query qua LINK2) | SP đọc qua Linked Server, vẫn trả về kết quả |
+| 07c | Login `admin`/`1` → chi nhánh TRACUU → Sao kê GD | SOTK=`XX9999999` (không tồn tại cả 2 nơi) | Lỗi: "Tài khoản không tồn tại trên hệ thống" |
+| 07d | Login `BT001`/`1` → chi nhánh BENTHANH → Sao kê GD | SOTK=`BT0000001`, khoảng ngày không có GD | Trả về rỗng, SODU_DAUKY = SODU_CUOIKY |
+
+> **Lưu ý TC-07b:** `TaiKhoan` trên SQL1 chỉ chứa dữ liệu BENTHANH (phân mảnh ngang) — dropdown của BT001 không thấy TD accounts. Phải test 07b từ `admin`/TRACUU vì `SP_SaoKeTaiKhoan` phiên bản TRACUU đọc TaiKhoan qua `LINK1`+`LINK2`, thấy toàn bộ tài khoản cả 2 chi nhánh.
 
 ### Hệ thống xử lý chi tiết
 
@@ -544,6 +569,96 @@ SELECT COUNT(*) FROM GD_CHUYENTIEN WHERE SOTK_CHUYEN = 'BT0000001' OR SOTK_NHAN 
 ```
 
 **Logic vấn đáp:** Đóng TK là thao tác DELETE thật (không xóa mềm) — chỉ được phép khi SODU = 0 VÀ không có lịch sử GD. Lý do: nếu có GD, xóa TK sẽ phá vỡ ràng buộc tham chiếu (FK) từ bảng GD_GOIRUT/GD_CHUYENTIEN. Logic kiểm tra nằm ở tầng Node.js (không dùng SP riêng) — 3 query tuần tự trước khi DELETE.
+
+---
+
+## TC-11: Kiểm tra Linked Server — Kết nối liên site (qua giao diện)
+
+### Mục tiêu
+Xác nhận Linked Server đang hoạt động bằng cách thực hiện các thao tác trên giao diện web — các thao tác này chỉ thành công khi LINK1/LINK2 hoạt động.
+
+### Tình huống test
+
+| ID | Cách thực hiện trên giao diện | Kết quả kỳ vọng | Linked Server nào được dùng |
+|----|-------------------------------|-----------------|----------------------------|
+| 11a | Login `BT001`/BENTHANH → Chuyển tiền `BT0000001` → `TD0000001`, số tiền hợp lệ | Thành công, SODU 2 TK cập nhật | SQL1 → `[LINK1]` → SQL2 |
+| 11b | Login `admin`/TRACUU → Sao kê GD → chọn SOTK `BT0000001` | Hiển thị được lịch sử GD | SQL3 → `[LINK1]` → SQL1 |
+| 11c | Login `admin`/TRACUU → Sao kê GD → chọn SOTK `TD0000001` | Hiển thị được lịch sử GD | SQL3 → `[LINK2]` → SQL2 |
+| 11d | Login `admin`/TRACUU → Liệt kê Nhân viên | Hiển thị NV cả BENTHANH lẫn TANDINH | SQL3 → `[LINK1]`+`[LINK2]` |
+| 11e | Tắt SQL2 → Login `BT001` → Chuyển tiền sang TD | Thông báo lỗi "Linked Server unreachable" | Chứng minh phụ thuộc Linked Server |
+
+**Logic vấn đáp:**
+- **Linked Server là gì?** → Cơ chế SQL Server cho phép query sang SQL Server khác bằng cú pháp `[SERVER_NAME].database.schema.table` — như thể truy vấn bảng local.
+- **Có cần Linked Server để chuyển tiền không?** → Có, bắt buộc. `sp_ChuyenTien` dùng `[LINK1]` để UPDATE số dư TK ở chi nhánh đối tác trong cùng 1 Distributed Transaction.
+- **Nếu Linked Server đứt thì sao?** → Giao dịch phân tán ROLLBACK hoàn toàn — tiền không bị mất, MSDTC đảm bảo ACID.
+
+---
+
+## TC-12: Kiểm tra Merge Replication — Đồng bộ dữ liệu (qua giao diện)
+
+### Mục tiêu
+Xác nhận dữ liệu KhachHang đồng bộ từ SQL1/SQL2 lên SQL3 sau khi Merge Agent chạy.
+
+### Tình huống test
+
+| ID | Bước 1 — Thao tác tạo dữ liệu | Bước 2 — Kiểm tra sau sync | Kết quả kỳ vọng |
+|----|-------------------------------|----------------------------|-----------------|
+| 12a | Login `BT001`/BENTHANH → Khách hàng → Thêm KH mới (CMND mới chưa có) | Login `admin`/TRACUU → Liệt kê KH → tìm CMND vừa thêm | KH xuất hiện trên TRACUU sau khi Merge Agent sync |
+| 12b | Login `TD001`/TANDINH → Khách hàng → Thêm KH mới | Login `admin`/TRACUU → Liệt kê KH | KH của TANDINH cũng hiện trên TRACUU |
+| 12c | Login `BT001` → Sửa thông tin 1 KH (HO/TEN) | Login `admin`/TRACUU → kiểm tra KH đó | Thông tin đã cập nhật trên TRACUU |
+| 12d | Kiểm tra replication qua SSMS | SSMS → ES-HAITD16 → Replication Monitor → PUB_TRACUU → xem tab Synchronization History | Trạng thái "Succeeded", thời gian sync gần nhất hợp lệ |
+
+> **Lưu ý:** Sau bước tạo dữ liệu, cần trigger Merge Agent sync thủ công (SSMS → Replication Monitor → right-click Subscription → Start Synchronizing) nếu không chạy continuous.
+
+**Logic vấn đáp:**
+- **Tại sao chỉ replicate KhachHang sang SQL3?** → SQL3 là trạm tra cứu — chỉ cần biết "khách hàng nào trong hệ thống". Giao dịch và số dư lấy real-time qua Linked Server.
+- **Merge vs Transactional Replication?** → Hệ thống dùng **Merge Replication** — cho phép cả Publisher lẫn Subscriber đều có thể ghi, conflict giải quyết bởi conflict resolver (mặc định: Publisher thắng).
+
+---
+
+## TC-13: Kiểm tra SQL Server Agent Job — Replication tự động (qua SSMS)
+
+### Mục tiêu
+Xác nhận các Job tự động hóa Replication đang chạy đúng (thực hiện trên SSMS — không có giao diện web cho phần này).
+
+### Tình huống test (SSMS trên ES-HAITD16 → SQL Server Agent → Jobs)
+
+| ID | Job cần kiểm tra | Cách xem | Kết quả kỳ vọng |
+|----|-----------------|----------|-----------------|
+| 13a | Merge Agent job: `NGUON-PUB_TRACUU-SQL3-...` | Right-click → View History | Last run: Succeeded |
+| 13b | Merge Agent job: `NGUON-PUB_BENTHANH-SQL1-...` | Right-click → View History | Last run: Succeeded |
+| 13c | Merge Agent job: `NGUON-PUB_TANDINH-SQL2-...` | Right-click → View History | Last run: Succeeded |
+| 13d | Chạy thủ công Merge Agent | Right-click job → Start Job at Step | Hoàn thành "no data changes" hoặc "merged N change(s)" |
+| 13e | Replication Monitor tổng quan | ES-HAITD16 → Replication → Launch Replication Monitor | 3 subscription đều xanh (không đỏ) |
+
+**Logic vấn đáp:**
+- **SQL Agent Job và Replication liên quan thế nào?** → Mỗi Publication tự tạo các Job: Snapshot Agent (tạo snapshot ban đầu), Merge Agent (đồng bộ định kỳ). Job fail → replication dừng, dữ liệu lạc hậu.
+- **"No data changes processed" có phải lỗi không?** → Không — nghĩa là không có thay đổi cần sync trong chu kỳ đó, replication hoạt động bình thường.
+
+---
+
+## TC-14: Khách hàng mở tài khoản ở nhiều chi nhánh (qua giao diện)
+
+### Mục tiêu
+Xác nhận 1 khách hàng (cùng CMND) có thể mở tài khoản ở cả 2 chi nhánh, và khi mở TK ở chi nhánh thứ 2 thì hệ thống **tự tra CMND không cần nhập lại họ tên**.
+
+### Tình huống test
+
+| ID | Cách thực hiện trên giao diện | Input | Kết quả kỳ vọng |
+|----|-------------------------------|-------|-----------------|
+| 14a | Login `BT001`/`1` → BENTHANH → Tài khoản → Mở tài khoản | CMND=`9988776655` *(chưa có trong hệ thống)*, HO=`Nguyen`, TEN=`Van X`, SoDuBanDau=500.000 | TK `BT000000X` tạo thành công |
+| 14b | Login `TD001`/`1` → TANDINH → Tài khoản → Mở tài khoản | Chỉ nhập CMND=`9988776655`, SoDuBanDau=200.000 — **không nhập HO/TEN** | TK `TD000000X` tạo thành công; SP tự tra HO/TEN từ KhachHang đã có |
+| 14c | Login `admin`/`1` → TRACUU → Liệt kê Khách hàng | Tìm CMND `9988776655` | Hiển thị KH với 2 TK: 1 BT + 1 TD |
+| 14d | Login `admin`/`1` → TRACUU → Sao kê GD → SOTK `BT000000X` | Khoảng ngày bất kỳ | Hiển thị lịch sử GD của TK BENTHANH |
+| 14e | Login KH `9988776655`/`123456` → BENTHANH → Tài khoản của tôi | — | Chỉ thấy TK `BT...` (không thấy TK TANDINH) |
+
+> **Chuẩn bị:** Cần tạo SQL Login cho KH `9988776655` trước khi test 14e — dùng chức năng Tạo tài khoản (Login) từ tài khoản admin hoặc BT001.
+
+### Điểm trình bày khi bảo vệ
+
+- **Tại sao KH không cần nhập lại họ tên ở chi nhánh 2?** → CMND là định danh duy nhất. `SP_TaoTaiKhoan` tra CMND trong `KhachHang` local, nếu chưa có thì tra qua `[LINK1]` sang chi nhánh kia. Tìm thấy → lấy HO/TEN từ đó, chỉ tạo thêm TK mới — không tạo lại KH.
+- **Dữ liệu KH lưu ở đâu?** → Phân mảnh ngang theo `MACN`: KH đăng ký ở BENTHANH → lưu SQL1, KH đăng ký TANDINH → lưu SQL2. Cả 2 replicate lên SQL3.
+- **Có bị trùng CMND không?** → Khoá duy nhất là `CMND + MACN`. Cùng CMND, khác MACN là hợp lệ — 1 người có thể có TK ở 2 chi nhánh.
 
 ---
 

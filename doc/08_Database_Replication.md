@@ -89,7 +89,11 @@ SP là article trong PUB_TRACUU → **không ALTER trực tiếp trên SQL3** (b
 - ✅ **KhachHang → giữ check**
 - ❌ NhanVien → bỏ check
 - ❌ TaiKhoan → bỏ check
-- ❌ Stored Procedures → bỏ check toàn bộ (SP cài thủ công)
+
+**Stored Procedures** (giữ 2 SP bắt buộc, bỏ phần còn lại):
+- ✅ **sp_Login_App → giữ check** (admin đăng nhập vào TRACUU cần SP này)
+- ✅ **SP_TaoTaiKhoan → giữ check** (tạo tài khoản trên TRACUU cần SP này)
+- ❌ Các SP còn lại → bỏ check (SP đặc thù TRACUU cài thủ công qua `setup_db.js`)
 
 **Bước 4:** Bấm OK → SSMS sẽ cảnh báo "Removing articles..." → xác nhận.
 

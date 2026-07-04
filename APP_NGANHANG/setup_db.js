@@ -544,10 +544,13 @@ async function executeScripts() {
             await pool.request().batch(alterSpDanhSachTrangThaiLogin);
             await pool.request().batch(alterSpDanhSachTrangThaiLoginPermissions);
             
-            console.log(`[${key}] Đang thực thi ALTER SP_TaoTaiKhoan...`);
-            await pool.request().batch(createSpTaoTaiKhoan);
-            await pool.request().batch(alterSpTaoTaiKhoanNguon);
-            await pool.request().batch(grantSpTaoTaiKhoan);
+            // SP_TaoTaiKhoan: skip TRACUU vì đã là article trong PUB_TRACUU (replication tự đồng bộ)
+            if (key !== 'TRACUU') {
+                console.log(`[${key}] Đang thực thi ALTER SP_TaoTaiKhoan...`);
+                await pool.request().batch(createSpTaoTaiKhoan);
+                await pool.request().batch(alterSpTaoTaiKhoanNguon);
+                await pool.request().batch(grantSpTaoTaiKhoan);
+            }
 
             // sp_TaiKhoanKhachHang: deploy trên tất cả server
             await pool.request().batch(createSpTaiKhoanKhachHang);

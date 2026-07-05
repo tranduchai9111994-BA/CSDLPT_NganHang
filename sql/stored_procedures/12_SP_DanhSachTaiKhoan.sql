@@ -1,22 +1,17 @@
 USE NGANHANG;
 GO
 
--- SP chạy trên TRACUU: gộp TaiKhoan từ cả 2 chi nhánh qua LINK1 (BENTHANH) và LINK2 (TANDINH).
--- KhachHang được JOIN local vì TRACUU replicate full bảng KhachHang.
--- Thay thế logic fan-out thủ công ở tầng Node.js khi NganHang xem danh sách tài khoản.
+-- ==========================================================================
+-- SP DANH SÁCH TÀI KHOẢN (phiên bản TRACUU — chạy trên SQL3)
+-- TaiKhoan replicate full (không filter MACN) → mỗi site đã có đủ data.
+-- Chỉ cần đọc từ LINK1, không cần UNION ALL LINK1+LINK2 (sẽ bị trùng).
+-- KhachHang có local trên TRACUU (replicate full) → JOIN local cho nhanh.
+-- ==========================================================================
 CREATE OR ALTER PROCEDURE sp_DanhSachTaiKhoan
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    -- ==========================================================================
-    -- BƯỚC 1: GỘP DỮ LIỆU TÀI KHOẢN TỪ CẢ 2 CHI NHÁNH
-    -- Mục đích: TRACUU không có TaiKhoan local, phải đọc qua Linked Server
-    --   - LINK1 → chi nhánh BENTHANH
-    --   - LINK2 → chi nhánh TANDINH
-    -- JOIN với KhachHang local (replicate full) để lấy họ tên khách hàng
-    -- Kết quả sắp xếp theo ngày mở TK mới nhất lên trước
-    -- ==========================================================================
     SELECT RTRIM(tk.SOTK)  AS SOTK,
            RTRIM(tk.CMND)  AS CMND,
            tk.SODU,
@@ -24,19 +19,7 @@ BEGIN
            CONVERT(varchar, tk.NGAYMOTK, 103) AS NGAYMOTK,
            RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen
     FROM [LINK1].NGANHANG.dbo.TaiKhoan tk
-    LEFT JOIN KhachHang kh ON RTRIM(tk.CMND) = RTRIM(kh.CMND)
-
-    UNION ALL
-
-    SELECT RTRIM(tk.SOTK),
-           RTRIM(tk.CMND),
-           tk.SODU,
-           RTRIM(tk.MACN),
-           CONVERT(varchar, tk.NGAYMOTK, 103),
-           RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN)
-    FROM [LINK2].NGANHANG.dbo.TaiKhoan tk
-    LEFT JOIN KhachHang kh ON RTRIM(tk.CMND) = RTRIM(kh.CMND)
-
-    ORDER BY NGAYMOTK DESC;
+    OUTER APPLY (SELECT TOP 1 HO, TEN FROM KhachHang WHERE RTRIM(CMND)=RTRIM(tk.CMND)) kh
+    ORDER BY tk.NGAYMOTK DESC;
 END
 GO

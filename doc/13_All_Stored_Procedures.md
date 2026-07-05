@@ -4,13 +4,12 @@ Tài liệu này tổng hợp code mới nhất của tất cả các Stored Pro
 
 **[Cập nhật 19/06/2026] Thông tin đưa vào Article (Replication):**
 - **PUB_BENTHANH & PUB_TANDINH:** Đã add toàn bộ 11 SP nghiệp vụ bên dưới vào Article (chế độ Replicate stored procedure definitions).
-- **PUB_TRACUU:** Chỉ add 2 SP là `sp_Login_App` và `SP_TaoTaiKhoan`.
-- **[Cập nhật 30/06/2026] SP riêng của TRACUU** (không qua Replication, cài bằng `setup_db.js` hoặc [`sql/deploy_tracuu.sql`](../sql/deploy_tracuu.sql)):
-  - `sp_DanhSachTaiKhoan` — gộp TaiKhoan từ LINK1+LINK2, JOIN KhachHang local
+- **PUB_TRACUU:** Article gồm: `sp_Login_App`, `SP_TaoTaiKhoan`, `sp_LietKeKhachHang`, `sp_LietKeTaiKhoanTheoNgay`, `sp_DanhSachTaiKhoan` (tổng 5 SP).
+- **[Cập nhật 05/07/2026] SP riêng của TRACUU** (không qua Replication, cài bằng `setup_db.js` hoặc [`sql/deploy_tracuu.sql`](../sql/deploy_tracuu.sql)):
   - `sp_SaoKeToanBo` — gộp GD_GOIRUT + GD_CHUYENTIEN từ LINK1+LINK2
   - `sp_DanhSachNhanVien` — gộp NhanVien từ LINK1+LINK2 (TRACUU không có NhanVien local)
-  - `sp_LietKeTaiKhoanTheoNgay` — phiên bản TRACUU, đọc TaiKhoan qua LINK1+LINK2
   - `SP_DanhSachTrangThaiLogin` — phiên bản TRACUU, đọc NhanVien qua LINK, KhachHang+QuanTriLogin local
+- **[Cập nhật 05/07/2026] Lưu ý quan trọng về TaiKhoan:** TaiKhoan replicate full (giống ChiNhanh) → mỗi site đã có đủ TK cả 2 chi nhánh. SP trên TRACUU chỉ đọc từ **LINK1** (không UNION ALL LINK1+LINK2, vì sẽ bị duplicate). JOIN KhachHang local dùng **OUTER APPLY TOP 1** để tránh nhân bản kết quả.
 - **Lưu ý:** Đã xoá bỏ `SP_DangNhap` (không phải là Article, xoá thành công bằng `DROP PROCEDURE IF EXISTS`).
 
 ## sp_ChuyenNhanVien
@@ -206,49 +205,40 @@ END
 
 ## sp_LietKeKhachHang
 ```sql
-CREATE PROCEDURE sp_LietKeKhachHang
-    @MACN nchar(10) = NULL  -- NULL = tất cả chi nhánh
+-- KhachHang replicate full trên mọi site → chỉ cần đọc local, không cần Linked Server.
+CREATE OR ALTER PROCEDURE [dbo].[sp_LietKeKhachHang]
+    @MACN nchar(10) = NULL  -- NULL = tất cả; có giá trị = lọc theo chi nhánh
 AS
 BEGIN
-    SET NOCOUNT ON
+    SET NOCOUNT ON;
 
-    IF @MACN IS NULL
-    BEGIN
-        -- Liệt kê tất cả chi nhánh – lấy từ local + LINK1, sắp xếp theo HO+TEN
-        SELECT HO, TEN, CMND, MACN, SODT
-        FROM KhachHang  -- local (BT)
-        UNION ALL
-        SELECT HO, TEN, CMND, MACN, SODT
-        FROM LINK1.NGANHANG.dbo.KhachHang  -- TD
-        ORDER BY MACN, HO, TEN
-    END
-    ELSE
-    BEGIN
-        -- Liệt kê 1 chi nhánh cụ thể
-        SELECT HO, TEN, CMND, MACN, SODT
-        FROM KhachHang
-        WHERE RTRIM(MACN) = RTRIM(@MACN)
-        ORDER BY HO, TEN
-    END
+    SELECT HO, TEN, CMND, MACN, SODT
+    FROM KhachHang
+    WHERE (@MACN IS NULL OR RTRIM(MACN) = RTRIM(@MACN))
+    ORDER BY MACN, HO, TEN;
 END
 ```
 
-## sp_LietKeTaiKhoanTheoNgay
+## sp_LietKeTaiKhoanTheoNgay *(TRACUU — đọc TaiKhoan qua LINK1)*
 ```sql
-CREATE   PROCEDURE [dbo].[sp_LietKeTaiKhoanTheoNgay]
-    @MACN nchar(10) = NULL, 
-    @TUNGAY date = NULL, 
+-- TaiKhoan replicate full → LINK1 đã có đủ data cả 2 CN. Không UNION ALL (sẽ duplicate).
+-- JOIN KhachHang local dùng OUTER APPLY TOP 1 để tránh nhân bản kết quả.
+CREATE OR ALTER PROCEDURE [dbo].[sp_LietKeTaiKhoanTheoNgay]
+    @MACN nchar(10) = NULL,
+    @TUNGAY date = NULL,
     @DENNGAY date = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
-    
-    SELECT RTRIM(tk.SOTK) AS SOTK, RTRIM(tk.CMND) AS CMND, 
-           RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen, 
-           tk.SODU, RTRIM(tk.MACN) AS MACN, 
+
+    SELECT RTRIM(tk.SOTK) AS SOTK,
+           RTRIM(tk.CMND) AS CMND,
+           RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen,
+           tk.SODU,
+           RTRIM(tk.MACN) AS MACN,
            CONVERT(varchar, tk.NGAYMOTK, 103) AS NGAYMOTK
-    FROM TaiKhoan tk
-    LEFT JOIN KhachHang kh ON RTRIM(tk.CMND) = RTRIM(kh.CMND)
+    FROM [LINK1].NGANHANG.dbo.TaiKhoan tk
+    OUTER APPLY (SELECT TOP 1 HO, TEN FROM KhachHang WHERE RTRIM(CMND)=RTRIM(tk.CMND)) kh
     WHERE (@MACN IS NULL OR RTRIM(tk.MACN) = RTRIM(@MACN))
       AND (@TUNGAY IS NULL OR CAST(tk.NGAYMOTK AS DATE) >= @TUNGAY)
       AND (@DENNGAY IS NULL OR CAST(tk.NGAYMOTK AS DATE) <= @DENNGAY)
@@ -274,27 +264,24 @@ BEGIN
 END
 ```
 
-## sp_DanhSachTaiKhoan *(TRACUU only — dùng LINK1+LINK2)*
+## sp_DanhSachTaiKhoan *(TRACUU — đọc TaiKhoan qua LINK1)*
 ```sql
--- Chạy trên TRACUU. Gộp TaiKhoan từ BENTHANH (LINK1) và TANDINH (LINK2),
--- JOIN KhachHang local (TRACUU replicate full KhachHang).
+-- TaiKhoan replicate full → LINK1 đã có đủ data cả 2 CN. Không UNION ALL (sẽ duplicate).
+-- JOIN KhachHang local dùng OUTER APPLY TOP 1 để tránh nhân bản kết quả.
 CREATE OR ALTER PROCEDURE sp_DanhSachTaiKhoan
 AS
 BEGIN
     SET NOCOUNT ON;
-    SELECT RTRIM(tk.SOTK)  AS SOTK, RTRIM(tk.CMND) AS CMND,
-           tk.SODU, RTRIM(tk.MACN) AS MACN,
+
+    SELECT RTRIM(tk.SOTK)  AS SOTK,
+           RTRIM(tk.CMND)  AS CMND,
+           tk.SODU,
+           RTRIM(tk.MACN)  AS MACN,
            CONVERT(varchar, tk.NGAYMOTK, 103) AS NGAYMOTK,
            RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen
     FROM [LINK1].NGANHANG.dbo.TaiKhoan tk
-    LEFT JOIN KhachHang kh ON RTRIM(tk.CMND) = RTRIM(kh.CMND)
-    UNION ALL
-    SELECT RTRIM(tk.SOTK), RTRIM(tk.CMND), tk.SODU, RTRIM(tk.MACN),
-           CONVERT(varchar, tk.NGAYMOTK, 103),
-           RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN)
-    FROM [LINK2].NGANHANG.dbo.TaiKhoan tk
-    LEFT JOIN KhachHang kh ON RTRIM(tk.CMND) = RTRIM(kh.CMND)
-    ORDER BY NGAYMOTK DESC;
+    OUTER APPLY (SELECT TOP 1 HO, TEN FROM KhachHang WHERE RTRIM(CMND)=RTRIM(tk.CMND)) kh
+    ORDER BY tk.NGAYMOTK DESC;
 END
 ```
 

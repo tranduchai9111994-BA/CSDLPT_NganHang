@@ -195,6 +195,32 @@ SP_ChuyenNhanVien cũng được cập nhật: khi chuyển sang chi nhánh đí
 
 ---
 
+## Sự cố 10: Dữ liệu TaiKhoan bị duplicate x2 trên TRACUU [05/07/2026]
+
+**Triệu chứng:**
+Trang "Liệt kê tài khoản" và dropdown "Sao kê giao dịch" trên TRACUU hiển thị mỗi tài khoản 2 lần. Form Liệt kê TK: 14 dòng thay vì 7. Dropdown sao kê: mỗi SOTK xuất hiện 2 lần.
+
+**Nguyên nhân gốc rễ:**
+Bảng `TaiKhoan` được **replicate full** (giống `ChiNhanh`) — mỗi site (SQL1, SQL2) đã có đầy đủ TK của cả 2 chi nhánh. SP trên TRACUU dùng `UNION ALL [LINK1]...TaiKhoan + [LINK2]...TaiKhoan` → mỗi TK xuất hiện đúng 2 lần (1 từ LINK1, 1 từ LINK2).
+
+Đây KHÔNG phải duplicate trong database (GROUP BY HAVING COUNT>1 = 0 rows), mà là do logic UNION ALL sai.
+
+Lưu ý: GD_GOIRUT, GD_CHUYENTIEN, NhanVien **KHÔNG** replicate full (phân mảnh ngang theo MACN) → UNION ALL LINK1+LINK2 vẫn đúng cho các bảng này.
+
+**Cách xử lý đã áp dụng:**
+1. Sửa `sp_DanhSachTaiKhoan` và `sp_LietKeTaiKhoanTheoNgay`: bỏ UNION ALL, chỉ đọc từ `[LINK1].NGANHANG.dbo.TaiKhoan` (LINK1 đã có đủ data).
+2. Đổi `LEFT JOIN KhachHang` thành `OUTER APPLY (SELECT TOP 1 ...)` để tránh nhân bản do KhachHang có thể có nhiều row cùng CMND.
+3. Route `baocao.js` sao kê GET/POST: thay `UNION ALL LINK1+LINK2` bằng `SELECT DISTINCT ... FROM [LINK1]...TaiKhoan` khi server=TRACUU.
+4. Restart app để clear connection pool cache (pool cũ cache kết quả UNION ALL cũ).
+
+**Sự cố phụ — Login failed for TD001 trên TRACUU:**
+Route ban đầu gọi `sp_LietKeTaiKhoanTheoNgay` trên TRACUU cho mọi user. Nhưng TD001 (ChiNhanh) không có login trên SQL3 → lỗi `Login failed for user 'TD001'`. Fix: chỉ NganHang (admin) gọi SP trên TRACUU; ChiNhanh query TaiKhoan local trực tiếp.
+
+**Bài học rút ra:**
+> Trước khi dùng UNION ALL qua Linked Server, phải xác nhận bảng có thực sự phân mảnh ngang hay đã replicate full. Bảng replicate full chỉ cần đọc từ 1 LINK — UNION ALL sẽ gây duplicate. Dùng `OUTER APPLY TOP 1` thay vì `LEFT JOIN` khi JOIN có thể trả nhiều row cùng key.
+
+---
+
 ## Sự cố 7: PUB_TRACUU subscription hỏng sau khi bỏ article [30/06/2026]
 
 **Triệu chứng:**

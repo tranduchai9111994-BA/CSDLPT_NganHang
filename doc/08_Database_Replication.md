@@ -52,13 +52,15 @@ Kiểu Replicate đã chọn cho Stored Procedures: **"Replicate stored procedur
 - **PUB_BENTHANH và PUB_TANDINH:** Bảng: 6 bảng (ChiNhanh, GD_CHUYENTIEN, GD_GOIRUT, KhachHang, NhanVien, TaiKhoan). SP: 11 SP nghiệp vụ và quản trị.
 - **PUB_TRACUU:** Replicate sang SQL3 (TRACUU). Articles gồm:
   - **Bảng:** `KhachHang` (replicate full toàn bộ — không filter theo MACN)
-  - **SP (replicate definition):** `sp_Login_App`, `SP_TaoTaiKhoan` — các SP cần chạy trên TRACUU và phải có guard `OBJECT_ID` để tương thích với schema (thiếu `NhanVien`/`ChiNhanh`)
+  - **SP (replicate definition):** `sp_Login_App`, `SP_TaoTaiKhoan`, `sp_LietKeKhachHang`, `sp_LietKeTaiKhoanTheoNgay`, `sp_DanhSachTaiKhoan` — tổng 5 SP article
 
-  TRACUU không cần các bảng giao dịch hay NhanVien/TaiKhoan vì khi cần, SP dùng Linked Server (`LINK1`→SQL1, `LINK2`→SQL2) để lấy. Các SP đặc thù cài thủ công qua `setup_db.js`:
-  - `sp_DanhSachTaiKhoan` — TaiKhoan từ LINK1+LINK2 JOIN KhachHang local
-  - `sp_SaoKeToanBo` — giao dịch từ LINK1+LINK2
-  - `sp_DanhSachNhanVien` — NhanVien từ LINK1+LINK2
-  - `sp_LietKeTaiKhoanTheoNgay` — phiên bản TRACUU đọc TaiKhoan qua LINK
+  TRACUU không cần các bảng giao dịch hay NhanVien/TaiKhoan vì khi cần, SP dùng Linked Server (`LINK1`→SQL1, `LINK2`→SQL2) để lấy.
+  
+  **[Cập nhật 05/07/2026] Lưu ý TaiKhoan:** TaiKhoan replicate full (giống ChiNhanh) → mỗi site đã có đủ TK cả 2 CN. SP trên TRACUU chỉ đọc từ **LINK1** (không UNION ALL LINK1+LINK2 vì sẽ bị duplicate). JOIN KhachHang local dùng **OUTER APPLY TOP 1** để tránh nhân bản kết quả.
+  
+  Các SP đặc thù cài thủ công qua `setup_db.js` (không qua Replication):
+  - `sp_SaoKeToanBo` — gộp GD_GOIRUT + GD_CHUYENTIEN từ LINK1+LINK2
+  - `sp_DanhSachNhanVien` — gộp NhanVien từ LINK1+LINK2
   - `SP_DanhSachTrangThaiLogin` — phiên bản TRACUU đọc NhanVien qua LINK, KhachHang local
 
 > ⚠️ **Hiện trạng SSMS:** Publication `PUB_TRACUU` hiện đang check tất cả 6 bảng — cần **bỏ check** các bảng ChiNhanh, GD_CHUYENTIEN, GD_GOIRUT, NhanVien, TaiKhoan, chỉ giữ lại KhachHang. Xem hướng dẫn sửa tại mục 3.2.

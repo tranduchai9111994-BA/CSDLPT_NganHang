@@ -19,6 +19,10 @@ router.get('/saoke', async (req, res) => {
       // SP thay raw SELECT: KhachHang không có GRANT SELECT trên TaiKhoan
       const myTK = await querySP(req, server, 'sp_TaiKhoanKhachHang', { CMND: user.MANV });
       tkRows = myTK.map(tk => ({ SOTK: tk.SOTK }));
+    } else if (server === 'TRACUU') {
+      tkRows = await querySQL(req, server, `
+        SELECT DISTINCT RTRIM(SOTK) AS SOTK FROM [LINK1].NGANHANG.dbo.TaiKhoan
+        ORDER BY SOTK`);
     } else {
       tkRows = await querySQL(req, server, `SELECT RTRIM(SOTK) AS SOTK FROM TaiKhoan ORDER BY SOTK`);
     }
@@ -69,7 +73,10 @@ router.post('/saoke', async (req, res) => {
         const tkInfo = myTKList.find(tk => tk.SOTK.trim() === SOTK.trim());
         sodu_hientai = tkInfo ? tkInfo.SODU : 0;
       } else {
-        const tkInfo = await querySQL(req, server, `SELECT SODU FROM TaiKhoan WHERE RTRIM(SOTK)=@sotk`, { sotk: SOTK });
+        const tkSQL = server === 'TRACUU'
+          ? `SELECT SODU FROM [LINK1].NGANHANG.dbo.TaiKhoan WHERE RTRIM(SOTK)=@sotk`
+          : `SELECT SODU FROM TaiKhoan WHERE RTRIM(SOTK)=@sotk`;
+        const tkInfo = await querySQL(req, server, tkSQL, { sotk: SOTK });
         sodu_hientai = tkInfo.length > 0 ? tkInfo[0].SODU : 0;
       }
 
@@ -96,7 +103,9 @@ router.post('/saoke', async (req, res) => {
 
       const tkRows = user.NHOM === 'KhachHang'
         ? myTKRows
-        : await querySQL(req, server, `SELECT RTRIM(SOTK) AS SOTK FROM TaiKhoan ORDER BY SOTK`);
+        : server === 'TRACUU'
+          ? await querySQL(req, server, `SELECT DISTINCT RTRIM(SOTK) AS SOTK FROM [LINK1].NGANHANG.dbo.TaiKhoan ORDER BY SOTK`)
+          : await querySQL(req, server, `SELECT RTRIM(SOTK) AS SOTK FROM TaiKhoan ORDER BY SOTK`);
 
       return res.render('baocao/saoke', {
         tkRows, rows, sodu_dau, sodu_cuoi, error: null,
@@ -156,7 +165,9 @@ router.post('/saoke', async (req, res) => {
 
     const tkRows = user.NHOM === 'KhachHang'
       ? myTKRows
-      : await querySQL(req, server, `SELECT RTRIM(SOTK) AS SOTK FROM TaiKhoan ORDER BY SOTK`);
+      : server === 'TRACUU'
+        ? await querySQL(req, server, `SELECT DISTINCT RTRIM(SOTK) AS SOTK FROM [LINK1].NGANHANG.dbo.TaiKhoan ORDER BY SOTK`)
+        : await querySQL(req, server, `SELECT RTRIM(SOTK) AS SOTK FROM TaiKhoan ORDER BY SOTK`);
 
     res.render('baocao/saoke', {
       tkRows, rows, sodu_dau: null, sodu_cuoi: null, error: null,
@@ -214,15 +225,28 @@ router.get('/lietke', async (req, res) => {
         DENNGAY: denngay || null
       };
 
-      let executeServer = server;
       if (user.NHOM === 'NganHang') {
-        executeServer = 'TRACUU';
         if (macn) sqlParams.MACN = macn;
-      } else if (user.NHOM === 'ChiNhanh') {
-        sqlParams.MACN = user.MACN;
+        rows = await querySP(req, 'TRACUU', 'sp_LietKeTaiKhoanTheoNgay', sqlParams);
+      } else {
+        const cnMACN = user.MACN;
+        rows = await querySQL(req, server, `
+          SELECT RTRIM(tk.SOTK) AS SOTK, RTRIM(tk.CMND) AS CMND,
+                 RTRIM(kh.HO)+' '+RTRIM(kh.TEN) AS HoTen,
+                 tk.SODU, RTRIM(tk.MACN) AS MACN,
+                 CONVERT(varchar, tk.NGAYMOTK, 103) AS NGAYMOTK
+          FROM TaiKhoan tk
+          LEFT JOIN KhachHang kh ON RTRIM(tk.CMND)=RTRIM(kh.CMND)
+          WHERE RTRIM(tk.MACN)=@macn
+            AND (@tungay IS NULL OR CAST(tk.NGAYMOTK AS DATE)>=@tungay)
+            AND (@denngay IS NULL OR CAST(tk.NGAYMOTK AS DATE)<=@denngay)
+          ORDER BY tk.NGAYMOTK DESC
+        `, { macn: cnMACN, tungay: tungay || null, denngay: denngay || null });
       }
-
-      rows = await querySP(req, executeServer, 'sp_LietKeTaiKhoanTheoNgay', sqlParams);
+      if (searchLike) {
+        const kw = search.toLowerCase();
+        rows = rows.filter(r => (r.CMND && r.CMND.toLowerCase().includes(kw)) || (r.HoTen && r.HoTen.toLowerCase().includes(kw)));
+      }
     }
 
     res.render('baocao/lietke', {

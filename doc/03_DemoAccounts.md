@@ -1,6 +1,6 @@
 # Tài Khoản Demo — Hệ Thống Ngân Hàng
 
-Tất cả tài khoản dưới đây dùng để đăng nhập vào web app tại `http://localhost:3000`.  
+Tất cả tài khoản dưới đây dùng để đăng nhập vào web app tại `http://localhost:3001`.  
 Xác thực qua SQL Server Authentication — login name là tên SQL Login.
 
 ---

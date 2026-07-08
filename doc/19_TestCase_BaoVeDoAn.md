@@ -176,6 +176,7 @@ Kiểm tra sinh số tài khoản không trùng theo prefix chi nhánh.
 | 03c | NV TanDinh mở TK đầu tiên | SOTK = `TD0000001` |
 | 03d | Mở TK với SODU âm | Lỗi từ SP (constraint check) |
 | 03e | KhachHang cố mở TK | HTTP 403 — Không có quyền |
+| 03f | NganHang (admin) cố mở TK | HTTP 403 — Không có quyền (chỉ ChiNhanh được mở TK) |
 
 ### Hệ thống xử lý chi tiết
 
@@ -185,9 +186,9 @@ Kiểm tra sinh số tài khoản không trùng theo prefix chi nhánh.
 - Prefix: `BENTHANH` → `BT`, `TANDINH` → `TD` (map tại dòng 9: `MACN_PREFIX`)
 
 **Bước 2 — Kiểm tra quyền**
-- Code: [`routes/taikhoan.js:62–65`](../APP_NGANHANG/routes/taikhoan.js)
-- `if (!['NganHang', 'ChiNhanh'].includes(user.NHOM))` → HTTP 403
-- KhachHang bị chặn ở tầng Node.js (middleware), không đến được SQL
+- Code: [`routes/taikhoan.js`](../APP_NGANHANG/routes/taikhoan.js) — middleware `requireChiNhanh`
+- `if (user.NHOM !== 'ChiNhanh')` → HTTP 403
+- Cả `KhachHang` lẫn `NganHang` đều bị chặn tại đây, không đến được SQL
 
 **Bước 3 — Gọi SP mở TK**
 - Code: [`routes/taikhoan.js:93–94`](../APP_NGANHANG/routes/taikhoan.js)
@@ -525,7 +526,7 @@ REVERT;
 **Logic vấn đáp:**
 - **Tại sao KhachHang không có SELECT?** → Nếu có SELECT trên TaiKhoan, KH có thể đọc TK của người khác. SP kiểm soát điều kiện `WHERE CMND = @CMND` → chỉ thấy dữ liệu của mình.
 - **DENY vs không GRANT khác gì nhau?** → Không GRANT = mặc định bị từ chối. DENY = tường minh chặn, ngay cả khi user thuộc nhiều role khác nhau có GRANT thì DENY vẫn thắng (DENY ưu tiên cao nhất trong SQL Server).
-- **Bảo mật 3 tầng:** (1) Database Role — SQL Server chặn ở tầng DB, (2) Backend Middleware — Node.js kiểm tra `user.NHOM`, (3) UI — ẩn menu không thuộc quyền.
+- **Bảo mật 3 tầng:** (1) Database Role — `DENY INSERT/UPDATE/DELETE` tại tầng DB, (2) Backend Middleware — `requireChiNhanh` chặn route ghi tại tầng Node.js (đảm bảo NganHang không thể mở/đóng TK, thêm/sửa/xóa KH/NV dù biết URL), (3) UI — ẩn nút thao tác theo `user.NHOM`.
 
 ---
 
@@ -543,8 +544,8 @@ REVERT;
 ### Hệ thống xử lý chi tiết
 
 **Bước 1 — Kiểm tra quyền (Node.js)**
-- Code: [`routes/taikhoan.js:108–112`](../APP_NGANHANG/routes/taikhoan.js)
-- Chỉ `NganHang` và `ChiNhanh` được đóng TK
+- Code: [`routes/taikhoan.js`](../APP_NGANHANG/routes/taikhoan.js) — middleware `requireChiNhanh`
+- Chỉ `ChiNhanh` được đóng TK — `NganHang` bị chặn HTTP 403
 
 **Bước 2 — Kiểm tra SODU = 0**
 - Code: [`routes/taikhoan.js:116–122`](../APP_NGANHANG/routes/taikhoan.js)

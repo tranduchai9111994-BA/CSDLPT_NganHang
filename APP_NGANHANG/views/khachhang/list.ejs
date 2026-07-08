@@ -7,7 +7,7 @@
   <div class="alert alert-error">❌ <%= error %></div>
 <% } %>
 
-<% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %>
+<% if (user.NHOM === 'ChiNhanh') { %>
   <a href="/khachhang/them" class="btn btn-primary" style="margin-bottom:14px;">+ Thêm khách hàng</a>
 <% } %>
 
@@ -16,7 +16,7 @@
     <tr>
       <th>#</th><th>CMND</th><th>Họ tên</th>
       <th>Chi nhánh</th><th>SĐT</th><th>Địa chỉ</th>
-      <% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %><th>Thao tác</th><% } %>
+      <% if (user.NHOM === 'ChiNhanh') { %><th>Thao tác</th><% } %>
     </tr>
   </thead>
   <tbody>
@@ -35,7 +35,7 @@
       </td>
       <td><%= r.SODT %></td>
       <td><%= r.DIACHI || '—' %></td>
-      <% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %>
+      <% if (user.NHOM === 'ChiNhanh') { %>
       <td>
         <button class="btn btn-info btn-sm" onclick="toggleSubForm('<%= r.CMND %>', this)">Xem tài khoản</button>
         <a href="/khachhang/sua/<%= r.CMND %>" class="btn btn-warning btn-sm">Sửa</a>
@@ -201,7 +201,8 @@ async function toggleSubForm(cmnd, btn) {
     }
 
     const uid = 'sodu_' + cmnd;
-    const formHtml = `
+    const canEdit = '<%= user.NHOM %>' === 'ChiNhanh';
+    const formHtml = canEdit ? `
       <form action="/taikhoan/mo" method="POST" class="open-account-bar"
             onsubmit="return validateSodu('${uid}')">
         <input type="hidden" name="CMND" value="${cmnd}">
@@ -216,7 +217,7 @@ async function toggleSubForm(cmnd, btn) {
         </div>
         <button type="submit">+ Mở ngay</button>
       </form>
-    `;
+    ` : '';
 
     const subRow = document.createElement('tr');
     subRow.className = 'subform-row';

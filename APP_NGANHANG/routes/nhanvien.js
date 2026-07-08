@@ -7,6 +7,13 @@ function getServer(req) {
   return req.session.user.SERVER || 'BENTHANH';
 }
 
+function requireChiNhanh(req, res, next) {
+  if (req.session.user?.NHOM !== 'ChiNhanh') {
+    return res.status(403).render('error', { message: 'Không có quyền.', layout: false });
+  }
+  next();
+}
+
 // GET /nhanvien - Danh sách nhân viên
 router.get('/', async (req, res) => {
   const server = getServer(req);
@@ -51,7 +58,7 @@ async function sinhMANV(req, server, macn) {
 }
 
 // GET /nhanvien/them - Form thêm mới
-router.get('/them', async (req, res) => {
+router.get('/them', requireChiNhanh, async (req, res) => {
   const server = getServer(req);
   const user = req.session.user;
   try {
@@ -69,7 +76,7 @@ router.get('/them', async (req, res) => {
 });
 
 // POST /nhanvien/them - Thực hiện thêm
-router.post('/them', async (req, res) => {
+router.post('/them', requireChiNhanh, async (req, res) => {
   const server = getServer(req);
   const user   = req.session.user;
   let { MANV, HO, TEN, CMND, DIACHI, PHAI, SODT } = req.body;
@@ -93,7 +100,7 @@ router.post('/them', async (req, res) => {
 });
 
 // GET /nhanvien/sua/:manv
-router.get('/sua/:manv', async (req, res) => {
+router.get('/sua/:manv', requireChiNhanh, async (req, res) => {
   const server = getServer(req);
   const { manv } = req.params;
   try {
@@ -112,7 +119,7 @@ router.get('/sua/:manv', async (req, res) => {
 });
 
 // POST /nhanvien/sua
-router.post('/sua', async (req, res) => {
+router.post('/sua', requireChiNhanh, async (req, res) => {
   const server = getServer(req);
   const { MANV, HO, TEN, CMND, DIACHI, PHAI, SODT } = req.body;
   try {
@@ -131,7 +138,7 @@ router.post('/sua', async (req, res) => {
 });
 
 // POST /nhanvien/xoa
-router.post('/xoa', async (req, res) => {
+router.post('/xoa', requireChiNhanh, async (req, res) => {
   const server = getServer(req);
   const { MANV } = req.body;
   try {
@@ -145,7 +152,7 @@ router.post('/xoa', async (req, res) => {
 });
 
 // POST /nhanvien/chuyen
-router.post('/chuyen', async (req, res) => {
+router.post('/chuyen', requireChiNhanh, async (req, res) => {
   const { MANV, MACN_MOI } = req.body;
   try {
     // SP phải chạy trên server chứa NV hiện tại (chi nhánh cũ)
@@ -160,7 +167,7 @@ router.post('/chuyen', async (req, res) => {
 });
 
 // POST /nhanvien/phuchoi
-router.post('/phuchoi', async (req, res) => {
+router.post('/phuchoi', requireChiNhanh, async (req, res) => {
   const server = getServer(req);
   const { MANV } = req.body;
   try {

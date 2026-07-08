@@ -7,7 +7,7 @@
   <div class="alert alert-error">❌ <%= error %></div>
 <% } %>
 
-<% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %>
+<% if (user.NHOM === 'ChiNhanh') { %>
   <a href="/nhanvien/them" class="btn btn-primary" style="margin-bottom:14px;">+ Thêm nhân viên</a>
 <% } %>
 
@@ -16,7 +16,7 @@
     <tr>
       <th>#</th><th>Mã NV</th><th>Họ tên</th><th>CMND</th>
       <th>Chi nhánh</th><th>SĐT</th><th>Địa chỉ</th><th>Tình trạng</th>
-      <% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %><th>Thao tác</th><% } %>
+      <% if (user.NHOM === 'ChiNhanh') { %><th>Thao tác</th><% } %>
     </tr>
   </thead>
   <tbody>
@@ -43,7 +43,7 @@
           <span style="color:green; font-weight:bold;">Đang làm</span>
         <% } %>
       </td>
-      <% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %>
+      <% if (user.NHOM === 'ChiNhanh') { %>
       <td>
         <% if (!r.TrangThaiXoa) { %>
           <a href="/nhanvien/sua/<%= r.MANV.trim() %>" class="btn btn-warning btn-sm">Sửa</a>

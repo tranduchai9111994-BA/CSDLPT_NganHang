@@ -63,7 +63,7 @@ Giao tiếp liên chi nhánh (chuyển tiền, sao kê) được thực hiện t
    ```bash
    npm start
    ```
-6. Truy cập ứng dụng tại: `http://localhost:3000`
+6. Truy cập ứng dụng tại: `http://localhost:3001`
 
 ---
 

@@ -10,23 +10,26 @@ Tất cả các chức năng nghiệp vụ được tách ra thành từng file 
 - Gán thông tin (MANV, HOTEN, NHOM, MACN, SERVER) vào `req.session.user`.
 
 ## 2. `khachhang.js` (Quản lý Khách Hàng)
-- CRUD (Create, Read, Update, Delete). Giao diện tuân thủ đầy đủ các nút chức năng: Thêm, Xóa, Phục hồi (Reset Form / Hủy trạng thái xóa), Ghi, Thoát.
-- Nếu nhóm là `NganHang`, kết nối tới Server `TRACUU` để lấy toàn bộ. Nếu là `ChiNhanh`, kết nối Server cục bộ để lấy dữ liệu chi nhánh mình.
+- **NganHang**: Chỉ xem danh sách toàn hệ thống (query `TRACUU`). **Không** thêm/sửa/xóa.
+- **ChiNhanh**: Toàn quyền CRUD — xem/thêm/sửa/xóa khách hàng trong chi nhánh mình (query server cục bộ).
+- Các route ghi (`GET/POST /them`, `GET/POST /sua`, `POST /xoa`) được bảo vệ bởi middleware `requireChiNhanh` — NganHang bị chặn HTTP 403 ngay tại route, không chỉ ở tầng UI.
 - Gọi SP `sp_ThemKhachHang` để thêm mới.
 - **Form thêm mới (views/khachhang/form.ejs):** Thứ tự trường được tối ưu — Họ/Tên → Địa chỉ → Giới tính/Ngày cấp → SĐT → CMND/Mã PIN (ở dưới cùng). CMND để trống không có placeholder tránh browser autocomplete nhầm. Ô Mã PIN có nút mắt 👁 để hiện/ẩn ký tự. Toàn form dùng `autocomplete="off"`.
 
 ## 3. `nhanvien.js` (Quản lý Nhân Viên)
-- Hoạt động tương tự `khachhang.js`. Giao diện tuân thủ đầy đủ các nút chức năng: Thêm, Xóa, Phục hồi (Reset Form / Hủy trạng thái xóa), Ghi, Thoát.
-- **[Cập nhật 30/06/2026] Nhóm NganHang:** Gọi `querySP(req, 'TRACUU', 'sp_DanhSachNhanVien', {})` — SP chạy trên TRACUU đọc NhanVien qua LINK1+LINK2 (TRACUU không có NhanVien local sau khi sửa PUB_TRACUU).
+- **NganHang**: Chỉ xem danh sách toàn hệ thống — gọi `querySP(req, 'TRACUU', 'sp_DanhSachNhanVien', {})` — SP chạy trên TRACUU đọc NhanVien qua LINK1+LINK2 (TRACUU không có NhanVien local). **Không** thêm/sửa/xóa/chuyển CN/phục hồi.
+- **ChiNhanh**: Toàn quyền — thêm/sửa/xóa/chuyển chi nhánh/phục hồi nhân viên trong chi nhánh mình.
+- Tất cả route ghi (`/them`, `/sua`, `/xoa`, `/chuyen`, `/phuchoi`) được bảo vệ bởi middleware `requireChiNhanh`.
 - **Tính năng Thêm Mới:** Tự động sinh Mã Nhân Viên (`MANV`) theo định dạng chi nhánh — prefix `BT` cho BENTHANH (`BT001`, `BT002`...), prefix `TD` cho TANDINH (`TD001`, `TD002`...). Đảm bảo không trùng khi chuyển nhân viên qua lại giữa 2 chi nhánh. Hàm `sinhMANV()` query `TOP 1 MANV LIKE prefix%` rồi tăng số thứ tự.
 - Có thêm tính năng **Chuyển Chi Nhánh**: gọi SP `sp_ChuyenNhanVien(@MANV, @MACN_MOI)` để chuyển dữ liệu nhân viên từ phân mảnh này sang phân mảnh khác qua Linked Server (sử dụng `sqlcmd` qua hàm `execSPAdmin` do hạn chế của driver Node.js với Distributed Transaction).
 - Có thêm tính năng **Phục hồi**: Cho phép khôi phục lại nhân viên đã xóa/nghỉ việc (`TrangThaiXoa = 0`).
 
 ## 4. `taikhoan.js` (Mở Tài Khoản)
-- Giao diện được thiết kế chuẩn Master-Detail (SubForm): Chọn khách hàng ở Master, Form mở tài khoản (Detail) hiển thị ngay bên dưới.
-- Giao diện tuân thủ đầy đủ các nút chức năng: Thêm, Xóa, Phục hồi (Reset Form / Hủy trạng thái xóa), Ghi, Thoát.
+- **NganHang**: Chỉ xem danh sách toàn hệ thống (gộp qua SP `sp_DanhSachTaiKhoan` trên TRACUU). **Không** mở hoặc đóng tài khoản.
+- **ChiNhanh**: Xem TK chi nhánh mình + mở TK mới + đóng TK (khi SODU=0 và không có GD).
+- Route `GET/POST /mo` (mở TK) và `POST /dong` (đóng TK) được bảo vệ bởi `requireChiNhanh` — NganHang bị chặn HTTP 403.
+- Giao diện được thiết kế chuẩn Master-Detail (SubForm): Chọn khách hàng ở Master, Form mở tài khoản (Detail) hiển thị ngay bên dưới (chỉ hiển thị với ChiNhanh).
 - Tự động sinh `SOTK` bằng cách lấy số TK lớn nhất trong DB cộng thêm 1.
-- Danh sách tài khoản: Đối với nhóm `NganHang`, tự động tổng hợp danh sách tài khoản từ tất cả chi nhánh và map với danh sách Khách Hàng ở từng mảnh để hiển thị đầy đủ Họ Tên.
 - Gọi SP `sp_MoTaiKhoan`.
 
 ## 5. `giaodich.js` (Gửi / Rút / Chuyển tiền)

@@ -5,7 +5,7 @@ const path = require('path');
 const ejsLayouts = require('express-ejs-layouts');
 
 const app = express();
-const PORT = 3000;
+const PORT = 3001;
 
 // ==== CẤU HÌNH VIEW ENGINE ====
 app.set('view engine', 'ejs');

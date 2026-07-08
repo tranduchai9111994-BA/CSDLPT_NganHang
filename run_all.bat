@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0"
 set SERVERS=ES-HAITD16 ES-HAITD16\SQL1 ES-HAITD16\SQL2 ES-HAITD16\SQL3
 
 for %%S in (%SERVERS%) do (

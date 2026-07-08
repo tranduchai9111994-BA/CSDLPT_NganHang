@@ -3,7 +3,7 @@
 <% if (success) { %><div class="alert alert-success">✅ <%= success %></div><% } %>
 <% if (error)   { %><div class="alert alert-error">❌ <%= error %></div><% } %>
 
-<% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %>
+<% if (user.NHOM === 'ChiNhanh') { %>
   <a href="/taikhoan/mo" class="btn btn-primary" style="margin-bottom:14px;">+ Mở tài khoản</a>
 <% } %>
 
@@ -12,7 +12,7 @@
     <tr>
       <th>#</th><th>Số TK</th><th>CMND</th><th>Họ tên</th>
       <th>Chi nhánh</th><th>Ngày mở</th><th class="money">Số dư (VNĐ)</th>
-      <% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %><th>Thao tác</th><% } %>
+      <% if (user.NHOM === 'ChiNhanh') { %><th>Thao tác</th><% } %>
     </tr>
   </thead>
   <tbody>
@@ -25,7 +25,7 @@
       <td><span class="badge <%= r.MACN==='BENTHANH'?'badge-bn':'badge-td' %>"><%= r.MACN %></span></td>
       <td><%= r.NGAYMOTK || '—' %></td>
       <td class="money money-positive"><%= Number(r.SODU).toLocaleString('vi-VN') %></td>
-      <% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %>
+      <% if (user.NHOM === 'ChiNhanh') { %>
       <td>
         <form method="POST" action="/taikhoan/dong" style="display:inline;"
               onsubmit="return confirm('Đóng tài khoản <%= r.SOTK %>? Chỉ đóng được nếu số dư = 0 và chưa có giao dịch.')">

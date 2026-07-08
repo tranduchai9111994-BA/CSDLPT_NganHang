@@ -18,12 +18,19 @@ Quá trình đăng nhập được thống nhất 100% bằng **SQL Authenticati
 - Nếu kết nối thành công, hệ thống tiếp tục gọi `sp_Login_App` để truy xuất Role và Map tương ứng.
 - Điều này bảo đảm **mọi thao tác** lưu vết xuống cơ sở dữ liệu đều được định danh chính xác đến từng con người cụ thể (Audit) mà không cần đi qua bất kỳ tài khoản hệ thống trung gian nào. Tránh hoàn toàn việc thất thoát bảo mật.
 
-Bên cạnh đó, các Middleware trong NodeJS (như `requireRole`) vẫn được áp dụng chặt chẽ trên mọi Routing để chặn truy cập trái phép qua URL:
+Bên cạnh đó, các Middleware trong NodeJS vẫn được áp dụng chặt chẽ trên mọi Routing để chặn truy cập trái phép qua URL — **bảo vệ 2 tầng**:
+
+**Tầng 1 — `requireRole` ở `app.js` (kiểm tra truy cập vào module):**
 ```javascript
 app.use('/khachhang', requireLogin, requireRole('NganHang', 'ChiNhanh'), khachHangRoutes);
-app.use('/giaodich', requireLogin, requireRole('NganHang', 'ChiNhanh'), giaoDichRoutes);
+app.use('/giaodich',  requireLogin, requireRole('NganHang', 'ChiNhanh'), giaoDichRoutes);
+app.use('/taikhoan',  requireLogin, requireRole('NganHang', 'ChiNhanh', 'KhachHang'), taiKhoanRoutes);
 ```
-Nếu nhóm `KhachHang` cố tình truy cập các link trên, họ sẽ nhận mã lỗi HTTP 403 (Forbidden).
+Nếu nhóm `KhachHang` cố truy cập `/khachhang` hay `/giaodich`, họ nhận mã HTTP 403 (Forbidden).
+
+**Tầng 2 — `requireChiNhanh` bên trong từng router (kiểm tra quyền ghi):**
+
+Các route **thêm/sửa/xóa** trong `khachhang.js`, `nhanvien.js` và route **mở/đóng tài khoản** trong `taikhoan.js` được bảo vệ thêm bởi middleware `requireChiNhanh`. Điều này đảm bảo nhóm `NganHang` (Ban Giám Đốc) **chỉ được tra cứu, không thể thêm/sửa/xóa** dù đã vào được module. Kết hợp với lệnh `DENY INSERT, UPDATE, DELETE` tại tầng DB, quyền chỉ đọc của `NganHang` được bảo đảm tuyệt đối ở cả 3 tầng (DB → Backend → UI).
 
 ## 3. Quản Lý & Cấp Phát Login (Tính năng đặc biệt)
 Tính năng tạo và cấp phát Login (Form "Tạo Tài Khoản") đòi hỏi thao tác cấp Server (`CREATE LOGIN`, `ALTER LOGIN`). Quyền thao tác này không được giao cho các tài khoản NV thông thường. Thay vào đó:

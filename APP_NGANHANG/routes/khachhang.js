@@ -3,9 +3,15 @@ const express = require('express');
 const router = express.Router();
 const { querySQL, execSP, getAdminPool, sql } = require('../db');
 
-// Lấy serverKey từ session
 function getServer(req) {
   return req.session.user.SERVER || 'BENTHANH';
+}
+
+function requireChiNhanh(req, res, next) {
+  if (req.session.user?.NHOM !== 'ChiNhanh') {
+    return res.status(403).render('error', { message: 'Không có quyền.', layout: false });
+  }
+  next();
 }
 
 // GET /khachhang – Danh sách khách hàng
@@ -41,11 +47,8 @@ router.get('/', async (req, res) => {
 });
 
 // GET /khachhang/them – Form thêm mới
-router.get('/them', (req, res) => {
+router.get('/them', requireChiNhanh, (req, res) => {
   const user = req.session.user;
-  if (!['NganHang', 'ChiNhanh'].includes(user.NHOM)) {
-    return res.status(403).render('error', { message: 'Không có quyền.', layout: false });
-  }
   res.render('khachhang/form', {
     kh: null, action: 'them', error: null,
     macn: user.MACN
@@ -53,7 +56,7 @@ router.get('/them', (req, res) => {
 });
 
 // POST /khachhang/them – Thực hiện thêm
-router.post('/them', async (req, res) => {
+router.post('/them', requireChiNhanh, async (req, res) => {
   const user   = req.session.user;
   const server = getServer(req);
   const { CMND, HO, TEN, DIACHI, PHAI, NGAYCAP, SODT, MACPIN } = req.body;
@@ -119,7 +122,7 @@ router.post('/them', async (req, res) => {
 });
 
 // GET /khachhang/sua/:cmnd – Form sửa
-router.get('/sua/:cmnd', async (req, res) => {
+router.get('/sua/:cmnd', requireChiNhanh, async (req, res) => {
   const server = getServer(req);
   const { cmnd } = req.params;
   try {
@@ -140,7 +143,7 @@ router.get('/sua/:cmnd', async (req, res) => {
 });
 
 // POST /khachhang/sua – Thực hiện sửa
-router.post('/sua', async (req, res) => {
+router.post('/sua', requireChiNhanh, async (req, res) => {
   const server = getServer(req);
   const { CMND, HO, TEN, DIACHI, PHAI, NGAYCAP, SODT } = req.body;
   try {
@@ -159,7 +162,7 @@ router.post('/sua', async (req, res) => {
 });
 
 // POST /khachhang/xoa – Xóa mềm (đặt flag nếu có, hoặc xóa thật nếu chưa có GD)
-router.post('/xoa', async (req, res) => {
+router.post('/xoa', requireChiNhanh, async (req, res) => {
   const server = getServer(req);
   const { CMND } = req.body;
   try {

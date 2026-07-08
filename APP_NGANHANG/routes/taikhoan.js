@@ -60,7 +60,7 @@ router.get('/', async (req, res) => {
 router.get('/mo', async (req, res) => {
   const server = getServer(req);
   const user   = req.session.user;
-  if (!['NganHang', 'ChiNhanh'].includes(user.NHOM)) {
+  if (user.NHOM !== 'ChiNhanh') {
     return res.status(403).render('error', { message: 'Không có quyền.', layout: false });
   }
   try {
@@ -82,7 +82,7 @@ router.get('/mo', async (req, res) => {
 router.post('/mo', async (req, res) => {
   const server = getServer(req);
   const user   = req.session.user;
-  if (!['NganHang', 'ChiNhanh'].includes(user.NHOM)) {
+  if (user.NHOM !== 'ChiNhanh') {
     return res.status(403).render('error', { message: 'Không có quyền.', layout: false });
   }
   let { SOTK, CMND, SODU, MACN } = req.body;
@@ -107,7 +107,7 @@ router.post('/mo', async (req, res) => {
 router.post('/dong', async (req, res) => {
   const server = getServer(req);
   const user = req.session.user;
-  if (!['NganHang', 'ChiNhanh'].includes(user.NHOM)) {
+  if (user.NHOM !== 'ChiNhanh') {
     return res.redirect('/taikhoan?error=Không có quyền');
   }
   const { SOTK } = req.body;

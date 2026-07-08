@@ -28,9 +28,9 @@
       <% if (user.NHOM === 'ChiNhanh') { %>
       <td>
         <form method="POST" action="/taikhoan/dong" style="display:inline;"
-              onsubmit="return confirm('Đóng tài khoản <%= r.SOTK %>? Chỉ đóng được nếu số dư = 0 và chưa có giao dịch.')">
+              onsubmit="return confirm('Xóa tài khoản <%= r.SOTK %>? Chỉ xóa được nếu số dư = 0 và chưa có giao dịch.')">
           <input type="hidden" name="SOTK" value="<%= r.SOTK %>">
-          <button type="submit" class="btn btn-danger btn-sm">Đóng TK</button>
+          <button type="submit" class="btn btn-danger btn-sm">Xóa TK</button>
         </form>
       </td>
       <% } %>

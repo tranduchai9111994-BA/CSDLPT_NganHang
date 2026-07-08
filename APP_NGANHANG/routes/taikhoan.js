@@ -1,12 +1,27 @@
 // routes/taikhoan.js
 const express = require('express');
 const router  = express.Router();
-const { querySQL, execSP, querySP } = require('../db');
+const { querySQL, execSP, execSPAdmin, querySP, getAdminPool, sql } = require('../db');
 
 function getServer(req) { return req.session.user.SERVER || 'BENTHANH'; }
 
 // Tiền tố SOTK theo chi nhánh — đảm bảo không trùng khóa khi đồng bộ liên site
 const MACN_PREFIX = { BENTHANH: 'BT', TANDINH: 'TD' };
+
+// KhachHang phân mảnh ngang → local chỉ có KH chi nhánh mình.
+// Dùng admin pool + LINK1 để lấy KH cả 2 chi nhánh cho form mở TK.
+async function getAllKhachHang(serverKey) {
+  const pool = await getAdminPool(serverKey);
+  const result = await pool.request().query(`
+    SELECT RTRIM(CMND) AS CMND, RTRIM(HO)+' '+RTRIM(TEN) AS HoTen, RTRIM(MACN) AS MACN
+    FROM KhachHang
+    UNION ALL
+    SELECT RTRIM(CMND), RTRIM(HO)+' '+RTRIM(TEN), RTRIM(MACN)
+    FROM [LINK1].NGANHANG.dbo.KhachHang
+    ORDER BY MACN, HoTen
+  `);
+  return result.recordset || [];
+}
 
 // Sinh số TK tự động: <prefix_chinhanh> + 7 chữ số (ví dụ BT0000001, TD0000001)
 async function sinhSOTK(req, serverKey, macn) {
@@ -33,24 +48,32 @@ router.get('/', async (req, res) => {
       const rows = await querySP(req, 'TRACUU', 'sp_DanhSachTaiKhoan', {});
       return res.render('taikhoan/list', { rows, error: req.query.error || null, success: req.query.success || null });
     } else if (user.NHOM === 'ChiNhanh') {
-      sql = `
+      // TaiKhoan nhân bản toàn vẹn → hiển thị tất cả, không filter theo MACN
+      // KhachHang phân mảnh ngang → UNION local + LINK1 để có tên KH cả 2 chi nhánh
+      // Dùng admin pool vì user ChiNhanh không có quyền query LINK1
+      const pool = await getAdminPool(server);
+      const result = await pool.request().query(`
         SELECT RTRIM(tk.SOTK) AS SOTK, RTRIM(tk.CMND) AS CMND,
                RTRIM(kh.HO)+' '+RTRIM(kh.TEN) AS HoTen,
                tk.SODU, RTRIM(tk.MACN) AS MACN,
                CONVERT(varchar,tk.NGAYMOTK,103) AS NGAYMOTK
         FROM TaiKhoan tk
-        LEFT JOIN KhachHang kh ON RTRIM(tk.CMND)=RTRIM(kh.CMND)
-        WHERE RTRIM(tk.MACN) = @macn
+        OUTER APPLY (
+          SELECT TOP 1 HO, TEN FROM (
+            SELECT HO, TEN FROM KhachHang WHERE RTRIM(CMND)=RTRIM(tk.CMND)
+            UNION ALL
+            SELECT HO, TEN FROM [LINK1].NGANHANG.dbo.KhachHang WHERE RTRIM(CMND)=RTRIM(tk.CMND)
+          ) allKH
+        ) kh
         ORDER BY tk.NGAYMOTK DESC
-      `;
-      params = { macn: user.MACN };
+      `);
+      const rows = result.recordset || [];
+      return res.render('taikhoan/list', { rows, error: req.query.error || null, success: req.query.success || null });
     } else {
       // KhachHang: dùng SP để tránh raw SELECT trực tiếp (KhachHang không có GRANT SELECT trên TaiKhoan)
       const rows = await querySP(req, server, 'sp_TaiKhoanKhachHang', { CMND: user.MANV });
       return res.render('taikhoan/list', { rows, error: req.query.error || null, success: req.query.success || null });
     }
-    const rows = await querySQL(req, server, sql, params);
-    res.render('taikhoan/list', { rows, error: req.query.error || null, success: req.query.success || null });
   } catch (err) {
     res.render('taikhoan/list', { rows: [], error: err.message, success: null });
   }
@@ -65,11 +88,7 @@ router.get('/mo', async (req, res) => {
   }
   try {
     const sotk = await sinhSOTK(req, server, user.MACN);
-    // Lấy danh sách KH để chọn
-    const khRows = await querySQL(req, server, `
-      SELECT RTRIM(CMND) AS CMND, RTRIM(HO)+' '+RTRIM(TEN) AS HoTen
-      FROM KhachHang WHERE RTRIM(MACN)=@macn ORDER BY HO,TEN
-    `, { macn: user.MACN });
+    const khRows = await getAllKhachHang(server);
     res.render('taikhoan/form', {
       sotk, khRows, macn: user.MACN, error: null
     });
@@ -79,27 +98,33 @@ router.get('/mo', async (req, res) => {
 });
 
 // POST /taikhoan/mo – Thực hiện mở TK
+// 2 FK trên TaiKhoan: FK_TaiKhoan_KhachHang (CMND) + FK_TaiKhoan_ChiNhanh (MACN).
+// KhachHang + ChiNhanh đều phân mảnh ngang → cả 2 FK chỉ thỏa trên server có KH.
+// Cross-branch: MACN = chi nhánh KH, INSERT trên server KH → TK replicate full sang.
 router.post('/mo', async (req, res) => {
   const server = getServer(req);
   const user   = req.session.user;
   if (user.NHOM !== 'ChiNhanh') {
     return res.status(403).render('error', { message: 'Không có quyền.', layout: false });
   }
-  let { SOTK, CMND, SODU, MACN } = req.body;
+  let { SOTK, CMND, SODU, KH_MACN } = req.body;
+  const khMacn = (KH_MACN || '').trim();
+  const userMacn = (user.MACN || '').trim();
+  const crossBranch = khMacn && khMacn !== userMacn;
+  const MACN = crossBranch ? khMacn : userMacn;
   try {
-    if (!SOTK) {
-      SOTK = await sinhSOTK(req, server, MACN);
+    SOTK = await sinhSOTK(req, server, MACN);
+    const spParams = { SOTK, CMND, SODU: parseFloat(SODU) || 0, MACN };
+
+    if (crossBranch) {
+      await execSPAdmin(khMacn, 'sp_MoTaiKhoan', spParams);
+    } else {
+      await execSP(req, server, 'sp_MoTaiKhoan', spParams);
     }
-    await execSP(req, server, 'sp_MoTaiKhoan', {
-      SOTK, CMND, SODU: parseFloat(SODU) || 0, MACN
-    });
     res.redirect('/taikhoan?success=Mở tài khoản thành công');
   } catch (err) {
-    const khRows = await querySQL(req, server, `
-      SELECT RTRIM(CMND) AS CMND, RTRIM(HO)+' '+RTRIM(TEN) AS HoTen
-      FROM KhachHang WHERE RTRIM(MACN)=@macn ORDER BY HO,TEN
-    `, { macn: user.MACN });
-    res.render('taikhoan/form', { sotk: SOTK, khRows, macn: MACN, error: err.message });
+    const khRows = await getAllKhachHang(server);
+    res.render('taikhoan/form', { sotk: SOTK, khRows, macn: user.MACN, error: err.message });
   }
 });
 

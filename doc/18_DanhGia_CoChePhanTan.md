@@ -78,8 +78,10 @@ IF @MACN_NHAN = @MACN_CHUYEN SET @IsNhanLocal = 1;
 **Trạng thái:** Chấp nhận được — các thao tác ghi đều ghi tại site sở hữu.
 
 Với TaiKhoan nhân bản toàn vẹn, quy tắc là **chỉ GHI tại site sở hữu** (site có MACN khớp):
-- `DELETE FROM TaiKhoan` tại local ([`taikhoan.js:136`](../APP_NGANHANG/routes/taikhoan.js:136)) — hợp lệ vì NV chi nhánh chỉ thao tác trên TK có MACN = chi nhánh mình (route filter `WHERE MACN = @macn`).
-- `INSERT INTO TaiKhoan` qua `sp_MoTaiKhoan` tại local — hợp lệ vì mở TK mới luôn gán MACN = chi nhánh hiện tại.
+- `DELETE FROM TaiKhoan` tại local ([`taikhoan.js`](../APP_NGANHANG/routes/taikhoan.js)) — hợp lệ vì xóa TK trên server local.
+- `INSERT INTO TaiKhoan` qua `sp_MoTaiKhoan`:
+  - **Cùng chi nhánh:** gọi `execSP` local — MACN = chi nhánh NV.
+  - **Cross-branch:** NV chi nhánh A mở TK cho KH chi nhánh B → `MACN = chi nhánh B`, INSERT chạy trên server B (via `execSPAdmin`) để thỏa cả `FK_TaiKhoan_KhachHang` (CMND) lẫn `FK_TaiKhoan_ChiNhanh` (MACN). TK replicate full sang server A.
 - `UPDATE TaiKhoan` (chuyển tiền) — SP `sp_ChuyenTien` dùng MACN check để quyết định ghi local hay qua LINK1.
 
 Replication sẽ tự đồng bộ các thay đổi sang site đối tác (bản copy).
@@ -197,7 +199,11 @@ execFile('sqlcmd', [..., ...vArgs, '-Q', query, '-b']);
 - SQL template là hằng — dễ audit, không có đường vào cho user input.
 - `'` vẫn được escape `→ ''` trong giá trị để ngăn SQL string literal breakage qua `$(VarName)` substitution.
 
-> ℹ️ `execSPAdmin` chỉ được gọi tại [`nhanvien.js:157`](../APP_NGANHANG/routes/nhanvien.js:157) (`SP_ChuyenNhanVien`, params `MANV`+`MACN_MOI`). Rủi ro thực tế thấp (input từ dropdown có kiểm soát), nhưng fix là đúng về kiến trúc.
+> ℹ️ `execSPAdmin` được gọi tại:
+> - [`nhanvien.js`](../APP_NGANHANG/routes/nhanvien.js) — `SP_ChuyenNhanVien` (chuyển NV) và `SP_PhuHoiNhanVien` (phục hồi NV).
+> - [`taikhoan.js`](../APP_NGANHANG/routes/taikhoan.js) — `sp_MoTaiKhoan` cross-branch (mở TK cho KH chi nhánh khác).
+>
+> Rủi ro thực tế thấp (input từ dropdown/form có kiểm soát), nhưng fix là đúng về kiến trúc.
 
 ---
 

@@ -12,17 +12,34 @@
 
     <div class="form-group">
       <label>Khách hàng *</label>
-      <select name="CMND" required>
+      <select name="CMND" required onchange="document.getElementById('KH_MACN').value=this.selectedOptions[0]?.dataset.macn||''">
         <option value="">-- Chọn khách hàng --</option>
-        <% khRows.forEach(kh => { %>
-          <option value="<%= kh.CMND %>"><%= kh.HoTen %> (<%= kh.CMND %>)</option>
+        <% const grouped = {};
+           khRows.forEach(kh => {
+             const cn = (kh.MACN || '').trim();
+             if (!grouped[cn]) grouped[cn] = [];
+             grouped[cn].push(kh);
+           });
+           const cnLabel = { BENTHANH: 'Chi nhánh Bến Thành', TANDINH: 'Chi nhánh Tân Định' };
+           const myMacn = (macn || '').trim();
+           const sortedKeys = Object.keys(grouped).sort((a, b) => a === myMacn ? -1 : b === myMacn ? 1 : 0);
+           sortedKeys.forEach(cn => { %>
+          <optgroup label="<%= cnLabel[cn] || cn %>">
+            <% grouped[cn].forEach(kh => { %>
+              <option value="<%= kh.CMND %>" data-macn="<%= cn %>"><%= kh.HoTen %> (<%= kh.CMND %>)</option>
+            <% }) %>
+          </optgroup>
         <% }) %>
       </select>
+      <input type="hidden" name="KH_MACN" id="KH_MACN" value="">
     </div>
 
     <div class="form-group">
       <label>Số dư ban đầu (VNĐ)</label>
-      <input type="number" name="SODU" value="0" min="0" step="100000">
+      <input type="text" id="SODU_DISPLAY" value="0" min="0"
+             style="text-align:right;font-weight:bold;"
+             oninput="let v=this.value.replace(/[^\d]/g,''); this.value=v?Number(v).toLocaleString('vi-VN'):'0'; document.getElementById('SODU_HIDDEN').value=v||'0';">
+      <input type="hidden" name="SODU" id="SODU_HIDDEN" value="0">
     </div>
 
     <input type="hidden" name="MACN" value="<%= macn %>">

@@ -169,7 +169,8 @@ END
 
 ## sp_MoTaiKhoan
 
-**Ghi chú:** SP cũ, dùng `LINK0` (Publisher NGUON). Phiên bản hiện tại dùng `SP_TaoTaiKhoan`.
+**Chạy trên:** BENTHANH / TANDINH  
+**Gọi bởi:** `taikhoan.js` – POST `/taikhoan/mo` (qua `execSP` hoặc `execSPAdmin` cho cross-branch)
 
 ```sql
 CREATE   PROCEDURE [dbo].[sp_MoTaiKhoan]
@@ -200,8 +201,12 @@ END
 
 > **Flow:**
 > 1. Kiểm tra SOTK chưa tồn tại trong `TaiKhoan` local.
-> 2. Kiểm tra CMND tồn tại qua `LINK0` (Publisher NGUON) — đây là cách cũ trước khi KhachHang được replicate full.
-> 3. INSERT vào `TaiKhoan` local → replicate sang các site khác.
+> 2. Kiểm tra CMND tồn tại qua `LINK0` (Publisher NGUON).
+> 3. INSERT vào `TaiKhoan` local → Merge Replication tự đồng bộ sang các site khác.
+>
+> **Cross-branch (app layer):** KhachHang phân mảnh ngang + TaiKhoan có FK trên cả CMND và MACN → cả 2 FK chỉ thỏa trên server có KH. `taikhoan.js` POST `/mo` so sánh `KH_MACN` (chi nhánh KH) vs `user.MACN`:
+> - **Cùng chi nhánh:** gọi `execSP(req, server, ...)` — INSERT local, FK thỏa.
+> - **Khác chi nhánh:** gán `MACN = KH_MACN`, sinh SOTK theo prefix KH_MACN, gọi `execSPAdmin(khMacn, ...)` — INSERT trên server có KH → FK thỏa → TK replicate full sang server đối tác.
 
 ---
 

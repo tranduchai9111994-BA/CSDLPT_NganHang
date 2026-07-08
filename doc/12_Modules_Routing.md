@@ -25,11 +25,11 @@ Tất cả các chức năng nghiệp vụ được tách ra thành từng file 
 - Có thêm tính năng **Phục hồi**: Cho phép khôi phục lại nhân viên đã xóa/nghỉ việc (`TrangThaiXoa = 0`).
 
 ## 4. `taikhoan.js` (Mở Tài Khoản)
-- **NganHang**: Chỉ xem danh sách toàn hệ thống (gộp qua SP `sp_DanhSachTaiKhoan` trên TRACUU). **Không** mở hoặc đóng tài khoản.
-- **ChiNhanh**: Xem TK chi nhánh mình + mở TK mới + đóng TK (khi SODU=0 và không có GD).
-- Route `GET/POST /mo` (mở TK) và `POST /dong` (đóng TK) được bảo vệ bởi `requireChiNhanh` — NganHang bị chặn HTTP 403.
-- Giao diện được thiết kế chuẩn Master-Detail (SubForm): Chọn khách hàng ở Master, Form mở tài khoản (Detail) hiển thị ngay bên dưới (chỉ hiển thị với ChiNhanh).
-- Tự động sinh `SOTK` bằng cách lấy số TK lớn nhất trong DB cộng thêm 1.
+- **NganHang**: Chỉ xem danh sách toàn hệ thống (gộp qua SP `sp_DanhSachTaiKhoan` trên TRACUU). **Không** mở hoặc xóa tài khoản.
+- **ChiNhanh**: Xem **tất cả TK** (TaiKhoan nhân bản toàn vẹn, không filter theo MACN) + mở TK mới + xóa TK (khi SODU=0 và không có GD). KhachHang phân mảnh ngang → dùng `getAdminPool()` + LINK1 để hiển thị tên KH cả 2 chi nhánh.
+- Route `GET/POST /mo` (mở TK) và `POST /dong` (xóa TK) được bảo vệ bởi `requireChiNhanh` — NganHang bị chặn HTTP 403.
+- **Mở TK cross-branch:** Form hiển thị KH từ cả 2 chi nhánh (nhóm theo optgroup). Khi KH thuộc chi nhánh khác → `MACN = chi nhánh KH`, `SOTK` prefix theo chi nhánh KH, INSERT chạy trên server có KH (via `execSPAdmin`) để thỏa FK_TaiKhoan_KhachHang + FK_TaiKhoan_ChiNhanh. TK replicate full sang server đối tác.
+- Tự động sinh `SOTK` theo prefix chi nhánh (BT/TD) + số tự tăng 7 chữ số.
 - Gọi SP `sp_MoTaiKhoan`.
 
 ## 5. `giaodich.js` (Gửi / Rút / Chuyển tiền)

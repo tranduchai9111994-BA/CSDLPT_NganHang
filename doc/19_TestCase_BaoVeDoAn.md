@@ -126,7 +126,7 @@ Kiểm tra dữ liệu trả về khác nhau theo NHOM (NganHang / ChiNhanh / Kh
 | ID | Đăng nhập bằng | Kết quả kỳ vọng |
 |----|----------------|-----------------|
 | 02a | `admin` (NganHang) | Thấy TK của **cả 2 chi nhánh** (gộp từ SQL1+SQL2) |
-| 02b | `BT001` (ChiNhanh-BENTHANH) | Chỉ thấy TK có `MACN=BENTHANH` |
+| 02b | `BT001` (ChiNhanh-BENTHANH) | Thấy TK của **cả 2 chi nhánh** (TaiKhoan nhân bản toàn vẹn, không filter theo MACN) |
 | 02c | *(CMND KH)* (KhachHang) | Chỉ thấy TK của chính mình (theo CMND) |
 
 ### Hệ thống xử lý chi tiết
@@ -138,9 +138,10 @@ Kiểm tra dữ liệu trả về khác nhau theo NHOM (NganHang / ChiNhanh / Kh
 - Kết quả: danh sách toàn bộ TK hệ thống
 
 **Nhánh ChiNhanh (BT001):**
-- Code: [`routes/taikhoan.js:36–46`](../APP_NGANHANG/routes/taikhoan.js)
-- Query raw SQL: `SELECT ... FROM TaiKhoan tk LEFT JOIN KhachHang kh ... WHERE RTRIM(tk.MACN) = @macn`
-- Chỉ query trên server local của chi nhánh đó → chỉ thấy TK thuộc chi nhánh mình
+- Code: [`routes/taikhoan.js:50–71`](../APP_NGANHANG/routes/taikhoan.js)
+- TaiKhoan nhân bản toàn vẹn → hiển thị **tất cả TK**, không filter theo MACN
+- KhachHang phân mảnh ngang → dùng `getAdminPool()` (tài khoản HTKN) + `OUTER APPLY (UNION ALL local + LINK1)` để lấy tên KH cả 2 chi nhánh
+- User ChiNhanh không có quyền query LINK1 → bắt buộc dùng admin pool
 
 **Nhánh KhachHang (CMND):**
 - Code: [`routes/taikhoan.js:48–50`](../APP_NGANHANG/routes/taikhoan.js)
@@ -159,7 +160,7 @@ SELECT * FROM TaiKhoan WHERE RTRIM(MACN) = 'BENTHANH';
 
 **Logic vấn đáp:** 3 nhóm user → 3 luồng query khác nhau. 
 NganHang query trên TRACUU (SQL3) dùng SP gộp qua LINK1+LINK2 — đây là **tái cấu trúc (reconstruction)** trong CSDL phân tán. 
-ChiNhanh chỉ query local. 
+ChiNhanh query TaiKhoan local (nhân bản full → có đủ TK cả 2 CN), JOIN KhachHang qua admin pool + LINK1 (KhachHang phân mảnh ngang). 
 KhachHang dùng SP bắt buộc (không có quyền SELECT trực tiếp) — đảm bảo chỉ thấy TK của mình.
 
 ---
@@ -176,9 +177,11 @@ Kiểm tra sinh số tài khoản không trùng theo prefix chi nhánh.
 | 03a | NV BenThanh mở TK đầu tiên | SOTK = `BT0000001` |
 | 03b | NV BenThanh mở TK thứ 2 | SOTK = `BT0000002` |
 | 03c | NV TanDinh mở TK đầu tiên | SOTK = `TD0000001` |
-| 03d | Mở TK với SODU âm | Lỗi từ SP (constraint check) |
-| 03e | KhachHang cố mở TK | HTTP 403 — Không có quyền |
-| 03f | NganHang (admin) cố mở TK | HTTP 403 — Không có quyền (chỉ ChiNhanh được mở TK) |
+| 03d | NV BenThanh mở TK cho KH **TanDinh** | SOTK = `TD000000X`, MACN = TANDINH, INSERT chạy trên SQL2 (thỏa FK) → TK replicate sang SQL1 |
+| 03e | NV TanDinh mở TK cho KH **BenThanh** | SOTK = `BT000000X`, MACN = BENTHANH, INSERT chạy trên SQL1 (thỏa FK) → TK replicate sang SQL2 |
+| 03f | Mở TK với SODU âm | Lỗi từ SP (constraint check) |
+| 03g | KhachHang cố mở TK | HTTP 403 — Không có quyền |
+| 03h | NganHang (admin) cố mở TK | HTTP 403 — Không có quyền (chỉ ChiNhanh được mở TK) |
 
 ### Hệ thống xử lý chi tiết
 
@@ -192,10 +195,17 @@ Kiểm tra sinh số tài khoản không trùng theo prefix chi nhánh.
 - `if (user.NHOM !== 'ChiNhanh')` → HTTP 403
 - Cả `KhachHang` lẫn `NganHang` đều bị chặn tại đây, không đến được SQL
 
-**Bước 3 — Gọi SP mở TK**
-- Code: [`routes/taikhoan.js:93–94`](../APP_NGANHANG/routes/taikhoan.js)
-- `execSP(req, server, 'sp_MoTaiKhoan', { SOTK, CMND, SODU, MACN })`
-- SP [`sql/stored_procedures/11_SP_TaoTaiKhoan.sql`](../sql/stored_procedures/11_SP_TaoTaiKhoan.sql): kiểm tra CMND tồn tại, INSERT INTO TaiKhoan
+**Bước 3 — Xác định chi nhánh đích (cross-branch logic)**
+- Code: [`routes/taikhoan.js:100–128`](../APP_NGANHANG/routes/taikhoan.js)
+- Form gửi `KH_MACN` (chi nhánh của KH được chọn, lấy từ `data-macn` trên `<option>`)
+- So sánh `KH_MACN` vs `user.MACN`:
+  - **Cùng chi nhánh:** `MACN = user.MACN`, SOTK prefix theo user.MACN → gọi `execSP(req, server, ...)` local
+  - **Khác chi nhánh (cross-branch):** `MACN = KH_MACN`, SOTK prefix theo KH_MACN → gọi `execSPAdmin(khMacn, ...)` trên server có KH
+
+**Bước 4 — Gọi SP mở TK**
+- SP `sp_MoTaiKhoan`: kiểm tra SOTK chưa tồn tại, kiểm tra CMND tồn tại, INSERT INTO TaiKhoan
+- Cross-branch: INSERT chạy trên server có KH → thỏa cả **FK_TaiKhoan_KhachHang** (CMND) lẫn **FK_TaiKhoan_ChiNhanh** (MACN)
+- TaiKhoan nhân bản toàn vẹn → Merge Replication tự đồng bộ sang server đối tác
 - Constraint `CHECK (SODU >= 0)` trong DB chặn số dư âm
 
 **Cách kiểm tra trong DB:**
@@ -210,6 +220,8 @@ SELECT name, definition FROM sys.check_constraints WHERE parent_object_id = OBJE
 **Logic vấn đáp:** Prefix BT/TD đảm bảo **không bao giờ trùng SOTK** khi 2 site đồng thời INSERT (vì TaiKhoan nhân bản toàn vẹn). 
 TK mới được INSERT tại site sở hữu (MACN khớp), Replication tự đồng bộ sang site đối tác. 
 Đây là giải pháp tránh xung đột khóa chính trong CSDL phân tán.
+
+**Cross-branch (03d, 03e):** KH đăng ký ở chi nhánh A, NV chi nhánh B mở TK cho KH đó → hệ thống tự route INSERT sang server A (nơi có KH) để thỏa FK. MACN và SOTK prefix theo chi nhánh KH (không phải chi nhánh NV). Dùng `execSPAdmin` (tài khoản HTKN) vì cần chạy SP trên server khác. Dropdown KH trong form hiển thị cả 2 chi nhánh (nhóm theo optgroup) với `data-macn` attribute để truyền chi nhánh KH về server.
 
 ---
 
@@ -684,8 +696,9 @@ Xác nhận 1 khách hàng (cùng CMND) có thể mở tài khoản ở cả 2 c
 
 ### Điểm trình bày khi bảo vệ
 
-- **Tại sao KH không cần nhập lại họ tên ở chi nhánh 2?** → CMND là định danh duy nhất. `SP_TaoTaiKhoan` tra CMND trong `KhachHang` local, nếu chưa có thì tra qua `[LINK1]` sang chi nhánh kia. Tìm thấy → lấy HO/TEN từ đó, chỉ tạo thêm TK mới — không tạo lại KH.
+- **Tại sao KH không cần nhập lại họ tên ở chi nhánh 2?** → CMND là định danh duy nhất. Form mở TK dùng dropdown hiển thị KH từ cả 2 chi nhánh (qua `getAllKhachHang()` sử dụng admin pool + LINK1). Chọn KH → tự động có CMND + chi nhánh KH.
 - **Dữ liệu KH lưu ở đâu?** → Phân mảnh ngang theo `MACN`: KH đăng ký ở BENTHANH → lưu SQL1, KH đăng ký TANDINH → lưu SQL2. Cả 2 replicate lên SQL3.
+- **Cross-branch INSERT thỏa FK thế nào?** → TaiKhoan có 2 FK: `FK_TaiKhoan_KhachHang` (CMND) và `FK_TaiKhoan_ChiNhanh` (MACN). KhachHang + ChiNhanh đều phân mảnh ngang → cả 2 FK chỉ thỏa trên server có KH. Giải pháp: khi NV chi nhánh A mở TK cho KH chi nhánh B → MACN = chi nhánh B, INSERT chạy trên server B (via `execSPAdmin`) → cả 2 FK thỏa → TK replicate full sang server A.
 - **Có bị trùng CMND không?** → Khoá duy nhất là `CMND + MACN`. Cùng CMND, khác MACN là hợp lệ — 1 người có thể có TK ở 2 chi nhánh.
 
 ---

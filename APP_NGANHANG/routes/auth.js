@@ -68,7 +68,27 @@ router.post('/login', async (req, res) => {
       return res.render('login', { layout: false, error: 'Bạn không có quyền đăng nhập vào chi nhánh này!', oldUsername: req.body.username, oldBranch: req.body.chinhanh });
     }
     
-    // NganHang luôn dùng TRACUU bất kể chọn server nào ở form login
+    // ---------------------------------------------------------------------
+    // XÁC ĐỊNH SERVER LÀM VIỆC (effectiveServer) SAU KHI ĐĂNG NHẬP
+    //
+    // ChiNhanh: dùng đúng server họ chọn (BENTHANH / TANDINH).
+    //   → SQL Login của nhân viên chỉ tồn tại trên server chi nhánh của mình,
+    //     nên việc chọn sai site đã bị từ chối ở bước kết nối DB phía trên.
+    //
+    // NganHang (admin): LUÔN được gán TRACUU, bất kể chọn site nào ở form.
+    //   → Mọi query của NganHang đều đi qua TRACUU (server tổng hợp):
+    //       • sp_DanhSachTaiKhoan  : gộp TK từ SQL1+SQL2 qua LINK1/LINK2
+    //       • sp_DanhSachNhanVien  : gộp NV từ SQL1+SQL2 qua LINK1/LINK2
+    //       • sp_SaoKeToanBo       : gộp GD từ SQL1+SQL2 qua LINK1/LINK2
+    //   → Nếu giữ nguyên serverKey (ví dụ BENTHANH), baocao.js sẽ chạy nhánh
+    //     query sai → thiếu dữ liệu chi nhánh đối tác.
+    //
+    // KhachHang: dùng server họ chọn, nhưng thực tế chọn site nào cũng như nhau:
+    //   • sp_TaiKhoanKhachHang đọc TaiKhoan LOCAL — bảng này nhân bản TOÀN VẸN
+    //     (SQL1 có đủ TK của cả 2 chi nhánh) → thấy đủ TK dù ở server nào.
+    //   • SP_SaoKeTaiKhoan đọc GD từ LOCAL + LINK1 → lấy đủ lịch sử
+    //     kể cả GD phát sinh ở chi nhánh đối tác.
+    // ---------------------------------------------------------------------
     const effectiveServer = (nv.NHOM && nv.NHOM.trim() === 'NganHang') ? 'TRACUU' : serverKey;
 
     req.session.user = {
@@ -76,7 +96,7 @@ router.post('/login', async (req, res) => {
       PASSWORD: password,
       MANV: nv.MANV ? nv.MANV.trim() : username,
       HOTEN: nv.HOTEN ? nv.HOTEN.trim() : '',
-      NHOM: nv.NHOM, // Sẽ là 'NganHang', 'ChiNhanh', hoặc 'KhachHang'
+      NHOM: nv.NHOM, // 'NganHang' | 'ChiNhanh' | 'KhachHang'
       MACN: nv.MACN ? nv.MACN.trim() : '',
       SERVER: effectiveServer
     };

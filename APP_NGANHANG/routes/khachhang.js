@@ -40,7 +40,7 @@ router.get('/', async (req, res) => {
         ORDER BY HO, TEN
       `, { macn: user.MACN });
     }
-    res.render('khachhang/list', { rows, error: null, success: null });
+    res.render('khachhang/list', { rows, error: req.query.error || null, success: req.query.success || null });
   } catch (err) {
     res.render('khachhang/list', { rows: [], error: err.message, success: null });
   }

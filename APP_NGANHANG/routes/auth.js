@@ -68,14 +68,17 @@ router.post('/login', async (req, res) => {
       return res.render('login', { layout: false, error: 'Bạn không có quyền đăng nhập vào chi nhánh này!', oldUsername: req.body.username, oldBranch: req.body.chinhanh });
     }
     
+    // NganHang luôn dùng TRACUU bất kể chọn server nào ở form login
+    const effectiveServer = (nv.NHOM && nv.NHOM.trim() === 'NganHang') ? 'TRACUU' : serverKey;
+
     req.session.user = {
       USERNAME: username,
       PASSWORD: password,
       MANV: nv.MANV ? nv.MANV.trim() : username,
       HOTEN: nv.HOTEN ? nv.HOTEN.trim() : '',
       NHOM: nv.NHOM, // Sẽ là 'NganHang', 'ChiNhanh', hoặc 'KhachHang'
-      MACN: nv.MACN ? nv.MACN.trim() : '', 
-      SERVER: serverKey
+      MACN: nv.MACN ? nv.MACN.trim() : '',
+      SERVER: effectiveServer
     };
 
     return res.redirect('/');

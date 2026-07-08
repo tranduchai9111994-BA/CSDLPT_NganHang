@@ -28,13 +28,15 @@ Tất cả các chức năng nghiệp vụ được tách ra thành từng file 
 - **NganHang**: Chỉ xem danh sách toàn hệ thống (gộp qua SP `sp_DanhSachTaiKhoan` trên TRACUU). **Không** mở hoặc xóa tài khoản.
 - **ChiNhanh**: Xem **tất cả TK** (TaiKhoan nhân bản toàn vẹn, không filter theo MACN) + mở TK mới + xóa TK (khi SODU=0 và không có GD). KhachHang phân mảnh ngang → dùng `getAdminPool()` + LINK1 để hiển thị tên KH cả 2 chi nhánh.
 - Route `GET/POST /mo` (mở TK) và `POST /dong` (xóa TK) được bảo vệ bởi `requireChiNhanh` — NganHang bị chặn HTTP 403.
-- **Mở TK cross-branch:** Form hiển thị KH từ cả 2 chi nhánh (nhóm theo optgroup). Khi KH thuộc chi nhánh khác → `MACN = chi nhánh KH`, `SOTK` prefix theo chi nhánh KH, INSERT chạy trên server có KH (via `execSPAdmin`) để thỏa FK_TaiKhoan_KhachHang + FK_TaiKhoan_ChiNhanh. TK replicate full sang server đối tác.
+- **Mở TK cross-branch:** Form hiển thị KH từ cả 2 chi nhánh (nhóm theo optgroup). Khi KH thuộc chi nhánh khác → `MACN = chi nhánh KH`, `SOTK` prefix theo **chi nhánh NV** (để phân biệt TK mở cross-branch), INSERT chạy trên server có KH (via `execSPAdmin`) để thỏa FK_TaiKhoan_KhachHang + FK_TaiKhoan_ChiNhanh. TK replicate full sang server đối tác.
 - Tự động sinh `SOTK` theo prefix chi nhánh (BT/TD) + số tự tăng 7 chữ số.
 - Gọi SP `sp_MoTaiKhoan`.
 
 ## 5. `giaodich.js` (Gửi / Rút / Chuyển tiền)
 - Cung cấp form giao dịch. Giao diện Gửi/Rút tiền được nâng cấp thiết kế **Tabs đa năng** (Chuyển đổi giữa Gửi và Rút trên cùng 1 trang), tự động hiển thị số dư trực quan với màu sắc tương ứng.
-- Gửi các lệnh tương ứng vào DB thông qua các SP `sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien`. Trong đó `sp_ChuyenTien` có logic phân tán phức tạp nhất (kiểm tra tài khoản nhận có nằm ở chi nhánh khác không và xử lý Distributed Transaction).
+- Dropdown hiển thị **tất cả TK** (TaiKhoan nhân bản toàn vẹn, không filter theo MACN) kèm `[MACN]` để phân biệt chi nhánh. NV có thể thực hiện giao dịch cho TK thuộc chi nhánh khác.
+- **SP luôn chạy trên server NV** (local) — đảm bảo GD_GOIRUT/GD_CHUYENTIEN ghi đúng mảnh (phân mảnh theo NV). Nếu TK thuộc chi nhánh khác, SP tự UPDATE TK qua LINK1 (Distributed Transaction).
+- Gọi SP `sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien` — cả 3 đều có logic kiểm tra MACN TK vs MACN NV và dùng LINK1 khi cần.
 
 ## 6. `baocao.js` (Thống kê, Sao kê)
 - **Cập nhật Logic Sao Kê Tài Khoản:** Trình bày dữ liệu trả về trực tiếp từ SP_SaoKeTaiKhoan. Toàn bộ logic tính số dư lũy kế đã được đẩy xuống tầng SQL Server xử lý.

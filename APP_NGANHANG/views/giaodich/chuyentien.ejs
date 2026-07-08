@@ -50,7 +50,7 @@
         <option value="">-- Chọn TK chuyển --</option>
         <% tkRows.forEach(tk => { %>
           <option value="<%= tk.SOTK %>">
-            <%= tk.SOTK %> (Số dư: <%= Number(tk.SODU).toLocaleString('vi-VN') %>)
+            <%= tk.SOTK %> [<%= (tk.MACN||'').trim() %>] (Số dư: <%= Number(tk.SODU).toLocaleString('vi-VN') %>)
           </option>
         <% }) %>
       </select>

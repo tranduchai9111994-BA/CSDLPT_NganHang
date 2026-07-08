@@ -776,33 +776,55 @@ Xác nhận 1 khách hàng (cùng CMND) có thể mở tài khoản ở cả 2 c
 
 ---
 
-## TC-16: Giao dịch tài khoản xuyên chi nhánh
+## TC-16: Giao dịch tài khoản xuyên chi nhánh (Gửi / Rút / Chuyển tiền)
 
-> Kịch bản: TK `BT0000001` mở tại BENTHANH, nhưng có GD tại cả 2 chi nhánh (gửi tại BT, nhận chuyển tiền từ TD).
+> Kịch bản: NV chi nhánh A thực hiện giao dịch cho TK thuộc chi nhánh B.
+> **Nguyên tắc:** SP luôn chạy trên server NV → GD ghi đúng mảnh (GD_GOIRUT/GD_CHUYENTIEN phân mảnh theo NV). UPDATE TK qua LINK1 nếu TK thuộc chi nhánh khác (Distributed Transaction).
 
-### Chuẩn bị dữ liệu
-
-```sql
--- Chạy trên SQL1 (BENTHANH): Gửi tiền tại BT
-EXEC sp_GuiTien @SOTK = 'BT0000001', @SOTIEN = 2000000, @MANV = 'BT001';
-
--- Chạy qua App: Login BT001 → Chuyển tiền TD0000001 → BT0000001, số tiền 500000
--- (GD này sẽ ghi vào GD_CHUYENTIEN trên SQL1, cập nhật TK trên SQL2 qua LINK1)
-```
-
-### Testcase
+### Testcase gửi/rút tiền cross-branch
 
 | ID | Login | Thao tác | Kỳ vọng | Điểm phân tán |
 |----|-------|----------|---------|---------------|
-| GD-01 | `BT001` / BENTHANH | Chuyển `BT0000001` → `TD0000001`, 500.000đ | Thành công, MSDTC commit 2 server | SQL1 trừ, SQL2 cộng trong 1 distributed txn |
-| GD-02 | `1111111111` / BENTHANH | Sao kê `BT0000001` | Thấy đủ: GD gửi tại BT + GD nhận từ TD | SP đọc GD_GOIRUT local + GD_CHUYENTIEN local |
-| GD-03 | `1111111111` / TANDINH | Sao kê `BT0000001` | **Vẫn thấy đủ GD** như login BENTHANH | TaiKhoan replicate toàn vẹn; SP đọc LINK1 từ SQL2 |
-| GD-04 | `admin` / BENTHANH | Sao kê `BT0000001` | Thấy đủ GD từ cả 2 phía | SP_SaoKeTaiKhoan phiên bản TRACUU: LINK1+LINK2 |
-| GD-05 | `NV003` / TANDINH | Sao kê `TD0000001` | Thấy GD chuyển đi (CT) 500.000đ | GD_CHUYENTIEN ghi trên SQL1, SP TANDINH đọc qua LINK1 |
+| GD-01a | `BT001` / BENTHANH | Gửi tiền vào `BT0000001` (TK thuộc BT), 200.000đ | Thành công — UPDATE TK **local** | Cùng CN → không cần LINK1. GD_GOIRUT ghi trên SQL1 |
+| GD-01b | `BT001` / BENTHANH | Gửi tiền vào `TD0000001` (TK thuộc TD), 500.000đ | Thành công — UPDATE TK **qua LINK1** | SP chạy trên SQL1, so sánh MACN TK (TD) ≠ MACN NV (BT) → UPDATE qua LINK1. GD_GOIRUT ghi trên SQL1 (đúng mảnh NV) |
+| GD-01c | `NV003` / TANDINH | Rút tiền từ `BT0000001` (TK thuộc BT), 100.000đ | Thành công — UPDATE TK **qua LINK1** | SP chạy trên SQL2, MACN TK (BT) ≠ MACN NV (TD) → UPDATE qua LINK1. GD_GOIRUT ghi trên SQL2 |
+| GD-01d | `BT001` / BENTHANH | Rút tiền từ `TD0000001`, số dư không đủ | Lỗi "Số dư không đủ" | `@@ROWCOUNT = 0` sau UPDATE qua LINK1 → ROLLBACK |
+
+### Testcase chuyển tiền cross-branch
+
+| ID | Login | Thao tác | Kỳ vọng | Điểm phân tán |
+|----|-------|----------|---------|---------------|
+| GD-02a | `BT001` / BENTHANH | Chuyển `BT0000001` → `TD0000001`, 500.000đ | Thành công, MSDTC commit 2 server | SQL1 trừ TK chuyển local, cộng TK nhận qua LINK1 |
+| GD-02b | `NV003` / TANDINH | Chuyển `TD0000001` → `BT0000001`, 300.000đ | Thành công | SQL2 trừ local, cộng qua LINK1. GD_CHUYENTIEN ghi SQL2 |
+
+### Testcase sao kê (xác nhận GD ghi đúng mảnh)
+
+| ID | Login | Thao tác | Kỳ vọng | Điểm phân tán |
+|----|-------|----------|---------|---------------|
+| GD-03a | `1111111111` / BENTHANH | Sao kê `BT0000001` | Thấy đủ: GD gửi/rút tại BT + GD nhận chuyển tiền từ TD | SP đọc GD_GOIRUT local + GD_CHUYENTIEN local + qua LINK1 |
+| GD-03b | `1111111111` / TANDINH | Sao kê `BT0000001` | **Vẫn thấy đủ GD** như login BENTHANH | TaiKhoan replicate toàn vẹn; SP đọc LINK1 từ SQL2 |
+| GD-03c | `admin` / BENTHANH | Sao kê `BT0000001` | Thấy đủ GD từ cả 2 phía | SP_SaoKeTaiKhoan phiên bản TRACUU: LINK1+LINK2 |
+
+### Kiểm tra dữ liệu trên DB sau test
+
+```sql
+-- Trên SQL1 (BENTHANH): GD_GOIRUT có GD do NV BT001 thực hiện
+SELECT * FROM GD_GOIRUT WHERE RTRIM(MANV) = 'BT001';
+-- Kỳ vọng: thấy GD gửi/rút cho cả TK BT lẫn TK TD (NV BT001 thực hiện)
+
+-- Trên SQL2 (TANDINH): GD_GOIRUT có GD do NV003 thực hiện
+SELECT * FROM GD_GOIRUT WHERE RTRIM(MANV) = 'NV003';
+-- Kỳ vọng: thấy GD rút cho TK BT (NV TD thực hiện, GD ghi trên SQL2)
+
+-- Quan trọng: GD_GOIRUT trên SQL1 KHÔNG có GD của NV003, và ngược lại
+-- → Chứng minh GD phân mảnh đúng theo NV
+```
 
 ### Điểm giải thích với thầy
 
-- **TK mở tại BT nhưng KH giao dịch tại TD:** Trong thực tế, KH cầm thẻ đến TD nộp tiền — nhân viên TD nhập SOTK của TK BT. Hệ thống hiện tại chỉ hỗ trợ qua chuyển tiền liên chi nhánh (chứ không hỗ trợ gửi tiền trực tiếp cho TK chi nhánh khác qua UI vì dropdown lọc theo MACN — đây là giới hạn thiết kế UI, không phải giới hạn kiến trúc phân tán).
+- **TK mở tại BT nhưng KH giao dịch tại TD:** Trong thực tế, KH cầm thẻ đến TD nộp tiền — nhân viên TD nhập SOTK của TK BT. Hệ thống hỗ trợ đầy đủ: dropdown hiển thị tất cả TK (TaiKhoan nhân bản toàn vẹn), NV có thể gửi/rút/chuyển tiền cho TK thuộc chi nhánh khác.
+- **SP luôn chạy trên server NV:** `sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien` đều so sánh MACN TK vs MACN NV → quyết định UPDATE local hoặc qua LINK1. GD_GOIRUT/GD_CHUYENTIEN **luôn INSERT local** → đúng mảnh phân mảnh ngang theo NV.
+- **Tại sao không route SP sang server TK?** Vì GD_GOIRUT/GD_CHUYENTIEN phân mảnh theo NV (article replication filter theo MACN NV). Nếu SP chạy trên server khác → GD ghi sai mảnh → Replication không đồng bộ đúng.
 - **Sao kê thấy GD ở cả 2 nơi:** Chứng minh `SP_SaoKeTaiKhoan` gom dữ liệu từ `GD_GOIRUT` + `GD_CHUYENTIEN` tại cả 2 server qua LINK1/LINK2.
 
 ---

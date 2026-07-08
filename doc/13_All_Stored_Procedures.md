@@ -213,107 +213,145 @@ END
 ## sp_GuiTien
 
 **Chạy trên:** BENTHANH / TANDINH  
-**Gọi bởi:** `giaodich.js` – POST `/giaodich/goirut` (LOAIGD = 'GT')
+**Gọi bởi:** `giaodich.js` – POST `/giaodich/goirut` (LOAIGD = 'GT')  
+**File SQL:** [`sql/stored_procedures/18_SP_GuiTien.sql`](../sql/stored_procedures/18_SP_GuiTien.sql)
 
 ```sql
-CREATE  PROCEDURE sp_GuiTien
+CREATE OR ALTER PROCEDURE [dbo].[sp_GuiTien]
     @SOTK   nchar(9),
     @SOTIEN money,
     @MANV   nchar(10)
 AS
 BEGIN
-    SET NOCOUNT ON
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
 
-    -- Kiểm tra số tiền hợp lệ
     IF @SOTIEN < 100000
     BEGIN
-        RAISERROR(N'Số tiền gửi tối thiểu là 100,000 VNĐ.', 16, 1)
-        RETURN
+        RAISERROR(N'Số tiền gửi tối thiểu là 100,000 VND.', 16, 1);
+        RETURN;
     END
 
-    -- Kiểm tra tài khoản tồn tại
-    IF NOT EXISTS (SELECT 1 FROM TaiKhoan WHERE SOTK = @SOTK)
+    -- Lấy MACN của TK (đọc local — TaiKhoan nhân bản full)
+    DECLARE @MACN_TK nchar(10);
+    SELECT @MACN_TK = RTRIM(MACN)
+    FROM TaiKhoan
+    WHERE RTRIM(SOTK) = RTRIM(@SOTK);
+
+    IF @MACN_TK IS NULL
     BEGIN
-        RAISERROR(N'Tài khoản không tồn tại.', 16, 1)
-        RETURN
+        RAISERROR(N'Tài khoản không tồn tại.', 16, 1);
+        RETURN;
     END
+
+    -- Lấy MACN của NV (NhanVien phân mảnh ngang, NV luôn có trên server mình)
+    DECLARE @MACN_NV nchar(10);
+    SELECT @MACN_NV = RTRIM(MACN)
+    FROM NhanVien
+    WHERE RTRIM(MANV) = RTRIM(@MANV);
+
+    DECLARE @IsLocal bit = 0;
+    IF @MACN_TK = @MACN_NV
+        SET @IsLocal = 1;
 
     BEGIN TRY
-        BEGIN TRANSACTION
+        BEGIN DISTRIBUTED TRANSACTION;
 
-        -- Cập nhật số dư
-        UPDATE TaiKhoan
-        SET SODU = SODU + @SOTIEN
-        WHERE SOTK = @SOTK
+        IF @IsLocal = 1
+        BEGIN
+            UPDATE TaiKhoan
+            SET SODU = SODU + @SOTIEN
+            WHERE RTRIM(SOTK) = RTRIM(@SOTK);
+        END
+        ELSE
+        BEGIN
+            UPDATE [LINK1].NGANHANG.dbo.TaiKhoan
+            SET SODU = SODU + @SOTIEN
+            WHERE RTRIM(SOTK) = RTRIM(@SOTK);
+        END
 
-        -- Ghi giao dịch gửi tiền
-        INSERT INTO GD_GOIRUT (SOTK, LOAIGD, NGAYGD, SOTIEN, MANV)
-        VALUES (@SOTK, 'GT', GETDATE(), @SOTIEN, @MANV)
+        -- Ghi log giao dịch gửi tiền (luôn local — GD_GOIRUT phân mảnh theo NV)
+        INSERT INTO GD_GOIRUT(SOTK, LOAIGD, NGAYGD, SOTIEN, MANV)
+        VALUES(@SOTK, 'GT', GETDATE(), @SOTIEN, @MANV);
 
-        COMMIT TRANSACTION
-
-        PRINT N'Gửi tiền thành công.'
+        COMMIT TRANSACTION;
     END TRY
     BEGIN CATCH
-        IF @@TRANCOUNT > 0
-            ROLLBACK TRANSACTION
-
-        DECLARE @msg NVARCHAR(4000)
-        SET @msg = ERROR_MESSAGE()
-
-        RAISERROR(@msg, 16, 1)
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        DECLARE @ErrMsg nvarchar(4000) = ERROR_MESSAGE();
+        RAISERROR(@ErrMsg, 16, 1);
     END CATCH
 END
 ```
 
 > **Flow:**
 > 1. **Validate:** `@SOTIEN >= 100,000` VNĐ (tối thiểu theo quy định).
-> 2. **Kiểm tra TK:** Tài khoản phải tồn tại trong `TaiKhoan` local (TK replicated full → luôn có local).
-> 3. **Transaction:**
->    - `UPDATE TaiKhoan SET SODU += @SOTIEN` — cộng số dư.
->    - `INSERT GD_GOIRUT (LOAIGD='GT')` — ghi log gửi tiền.
-> 4. **Replication:** GD_GOIRUT được replicate về TRACUU để NganHang tra cứu.
->
-> **Giao dịch này là local** (không dùng DISTRIBUTED TRANSACTION) vì TK và GD_GOIRUT đều nằm cùng server.
+> 2. **Kiểm tra TK + lấy MACN:** Đọc local (TK replicated full → luôn có local). Lấy MACN để xác định TK thuộc chi nhánh nào.
+> 3. **So sánh MACN TK vs MACN NV:** Cùng chi nhánh → `@IsLocal = 1` → UPDATE local; khác chi nhánh → UPDATE qua `LINK1`.
+> 4. **Distributed Transaction:** Dùng `BEGIN DISTRIBUTED TRANSACTION` + `XACT_ABORT ON` + MSDTC 2PC — đảm bảo UPDATE TK (có thể qua LINK1) và INSERT GD_GOIRUT (local) cùng commit hoặc cùng rollback.
+> 5. **GD_GOIRUT luôn ghi local:** Phân mảnh theo NV → GD ghi trên server NV thực hiện, không phụ thuộc TK thuộc chi nhánh nào.
 
 ---
 
 ## sp_RutTien
 
 **Chạy trên:** BENTHANH / TANDINH  
-**Gọi bởi:** `giaodich.js` – POST `/giaodich/goirut` (LOAIGD = 'RT')
+**Gọi bởi:** `giaodich.js` – POST `/giaodich/goirut` (LOAIGD = 'RT')  
+**File SQL:** [`sql/stored_procedures/19_SP_RutTien.sql`](../sql/stored_procedures/19_SP_RutTien.sql)
 
 ```sql
-CREATE PROCEDURE [dbo].[sp_RutTien]
-    @SOTK nchar(9),
+CREATE OR ALTER PROCEDURE [dbo].[sp_RutTien]
+    @SOTK   nchar(9),
     @SOTIEN money,
-    @MANV nchar(10)
+    @MANV   nchar(10)
 AS
 BEGIN
     SET NOCOUNT ON;
-    
-    -- ✅ BẢN VÁ: Thêm kiểm tra số tiền tối thiểu (đúng đề bài)
+    SET XACT_ABORT ON;
+
     IF @SOTIEN < 100000
     BEGIN
-        RAISERROR(N'Số tiền rút tối thiểu là 100,000 VNĐ.', 16, 1);
+        RAISERROR(N'Số tiền rút tối thiểu là 100,000 VND.', 16, 1);
         RETURN;
     END
 
-    -- Kiểm tra tài khoản tồn tại
-    IF NOT EXISTS (SELECT 1 FROM TaiKhoan WHERE RTRIM(SOTK) = RTRIM(@SOTK))
+    -- Lấy MACN của TK (đọc local — TaiKhoan nhân bản full)
+    DECLARE @MACN_TK nchar(10);
+    SELECT @MACN_TK = RTRIM(MACN)
+    FROM TaiKhoan
+    WHERE RTRIM(SOTK) = RTRIM(@SOTK);
+
+    IF @MACN_TK IS NULL
     BEGIN
         RAISERROR(N'Tài khoản không tồn tại.', 16, 1);
         RETURN;
     END
 
-    BEGIN TRY
-        BEGIN TRANSACTION;
+    -- Lấy MACN của NV
+    DECLARE @MACN_NV nchar(10);
+    SELECT @MACN_NV = RTRIM(MACN)
+    FROM NhanVien
+    WHERE RTRIM(MANV) = RTRIM(@MANV);
 
-        -- Trừ tiền + kiểm tra số dư đủ trong cùng 1 câu lệnh (atomic)
-        UPDATE TaiKhoan 
-        SET SODU = SODU - @SOTIEN 
-        WHERE RTRIM(SOTK) = RTRIM(@SOTK) AND SODU >= @SOTIEN;
-        -- Nếu SODU < @SOTIEN thì WHERE không match → @@ROWCOUNT = 0
+    DECLARE @IsLocal bit = 0;
+    IF @MACN_TK = @MACN_NV
+        SET @IsLocal = 1;
+
+    BEGIN TRY
+        BEGIN DISTRIBUTED TRANSACTION;
+
+        IF @IsLocal = 1
+        BEGIN
+            UPDATE TaiKhoan
+            SET SODU = SODU - @SOTIEN
+            WHERE RTRIM(SOTK) = RTRIM(@SOTK) AND SODU >= @SOTIEN;
+        END
+        ELSE
+        BEGIN
+            UPDATE [LINK1].NGANHANG.dbo.TaiKhoan
+            SET SODU = SODU - @SOTIEN
+            WHERE RTRIM(SOTK) = RTRIM(@SOTK) AND SODU >= @SOTIEN;
+        END
 
         IF @@ROWCOUNT = 0
         BEGIN
@@ -322,13 +360,11 @@ BEGIN
             RETURN;
         END
 
-        -- Ghi log giao dịch rút tiền
+        -- Ghi log giao dịch rút tiền (luôn local — GD_GOIRUT phân mảnh theo NV)
         INSERT INTO GD_GOIRUT(SOTK, LOAIGD, NGAYGD, SOTIEN, MANV)
         VALUES(@SOTK, 'RT', GETDATE(), @SOTIEN, @MANV);
-        -- LOAIGD = 'RT' nghĩa là Rút Tiền
 
         COMMIT TRANSACTION;
-        PRINT N'Rút tiền thành công.';
     END TRY
     BEGIN CATCH
         IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
@@ -340,11 +376,11 @@ END
 
 > **Flow:**
 > 1. **Validate:** `@SOTIEN >= 100,000` VNĐ.
-> 2. **Kiểm tra TK tồn tại:** Tài khoản phải có trong `TaiKhoan` local.
-> 3. **Transaction — kiểm tra số dư atomic:**
->    - `UPDATE TaiKhoan SET SODU -= @SOTIEN WHERE SODU >= @SOTIEN` — vừa trừ vừa kiểm tra số dư trong 1 câu lệnh. Nếu không đủ tiền → `@@ROWCOUNT = 0` → ROLLBACK + RAISERROR.
->    - `INSERT GD_GOIRUT (LOAIGD='RT')` — ghi log rút tiền.
-> 4. **Kỹ thuật đặc biệt:** Điều kiện `SODU >= @SOTIEN` trong WHERE tránh race condition (so với cách đọc SODU ra rồi so sánh riêng — có thể xảy ra concurrent access).
+> 2. **Kiểm tra TK + lấy MACN:** Đọc local (TK replicated full). Lấy MACN để xác định TK thuộc chi nhánh nào.
+> 3. **So sánh MACN TK vs MACN NV:** Cùng chi nhánh → UPDATE local; khác chi nhánh → UPDATE qua `LINK1`.
+> 4. **Kiểm tra số dư atomic:** `WHERE SODU >= @SOTIEN` trong UPDATE — nếu không đủ tiền → `@@ROWCOUNT = 0` → ROLLBACK + RAISERROR. Kỹ thuật này tránh race condition.
+> 5. **Distributed Transaction:** `BEGIN DISTRIBUTED TRANSACTION` + `XACT_ABORT ON` + MSDTC 2PC.
+> 6. **GD_GOIRUT luôn ghi local:** Phân mảnh theo NV → GD ghi trên server NV thực hiện.
 
 ---
 

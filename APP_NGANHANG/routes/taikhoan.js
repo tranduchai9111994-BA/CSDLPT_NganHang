@@ -113,7 +113,7 @@ router.post('/mo', async (req, res) => {
   const crossBranch = khMacn && khMacn !== userMacn;
   const MACN = crossBranch ? khMacn : userMacn;
   try {
-    SOTK = await sinhSOTK(req, server, MACN);
+    SOTK = await sinhSOTK(req, server, userMacn);
     const spParams = { SOTK, CMND, SODU: parseFloat(SODU) || 0, MACN };
 
     if (crossBranch) {

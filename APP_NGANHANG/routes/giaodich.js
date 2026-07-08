@@ -22,9 +22,9 @@ async function renderGoiRut(req, res, { error = null, success = null, activeTab 
   const user   = req.session.user;
   try {
     const tkRows = await querySQL(req, server, `
-      SELECT RTRIM(SOTK) AS SOTK, SODU, RTRIM(CMND) AS CMND
-      FROM TaiKhoan WHERE RTRIM(MACN)=@macn
-    `, { macn: user.MACN });
+      SELECT RTRIM(SOTK) AS SOTK, SODU, RTRIM(CMND) AS CMND, RTRIM(MACN) AS MACN
+      FROM TaiKhoan ORDER BY MACN, SOTK
+    `, {});
     res.render('giaodich/goirut', { tkRows, error, success, activeTab, prevSOTK, prevSOTIEN });
   } catch (err) {
     res.render('giaodich/goirut', { tkRows: [], error: err.message, success: null, activeTab, prevSOTK, prevSOTIEN });
@@ -32,15 +32,15 @@ async function renderGoiRut(req, res, { error = null, success = null, activeTab 
 }
 
 // POST /giaodich/guitien
+// SP luôn chạy local (server NV) — GD_GOIRUT phân mảnh theo NV.
+// SP tự xử lý UPDATE TK qua LINK1 nếu TK thuộc CN khác.
 router.post('/guitien', async (req, res) => {
   const server = getServer(req);
   const user   = req.session.user;
   const { SOTK, SOTIEN } = req.body;
   try {
     await execSP(req, server, 'sp_GuiTien', {
-      SOTK: SOTK.trim(),
-      SOTIEN: parseFloat(SOTIEN),
-      MANV: user.MANV
+      SOTK: SOTK.trim(), SOTIEN: parseFloat(SOTIEN), MANV: user.MANV
     });
     res.redirect('/giaodich/goirut?success=Gửi tiền thành công! Số tiền: ' + Number(SOTIEN).toLocaleString('vi-VN') + ' VNĐ');
   } catch (err) {
@@ -55,9 +55,7 @@ router.post('/ruttien', async (req, res) => {
   const { SOTK, SOTIEN } = req.body;
   try {
     await execSP(req, server, 'sp_RutTien', {
-      SOTK: SOTK.trim(),
-      SOTIEN: parseFloat(SOTIEN),
-      MANV: user.MANV
+      SOTK: SOTK.trim(), SOTIEN: parseFloat(SOTIEN), MANV: user.MANV
     });
     res.redirect('/giaodich/goirut?success=Rút tiền thành công! Số tiền: ' + Number(SOTIEN).toLocaleString('vi-VN') + ' VNĐ');
   } catch (err) {
@@ -75,8 +73,8 @@ router.get('/chuyentien', async (req, res) => {
   const user   = req.session.user;
   try {
     const tkRows = await querySQL(req, server, `
-      SELECT RTRIM(SOTK) AS SOTK, SODU FROM TaiKhoan WHERE RTRIM(MACN)=@macn
-    `, { macn: user.MACN });
+      SELECT RTRIM(SOTK) AS SOTK, SODU, RTRIM(MACN) AS MACN FROM TaiKhoan ORDER BY MACN, SOTK
+    `, {});
     res.render('giaodich/chuyentien', {
       tkRows, error: req.query.error || null, success: req.query.success || null
     });
@@ -86,6 +84,8 @@ router.get('/chuyentien', async (req, res) => {
 });
 
 // POST /giaodich/chuyentien
+// SP luôn chạy local (server NV) — GD_CHUYENTIEN phân mảnh theo NV.
+// sp_ChuyenTien đã có logic LINK1 để UPDATE TK nhận nếu khác CN.
 router.post('/chuyentien', async (req, res) => {
   const server = getServer(req);
   const user   = req.session.user;

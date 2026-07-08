@@ -1,29 +1,29 @@
-USE NGANHANG;
+USE NGANHANG;  -- Chọn database NGANHANG
 GO
 
--- SP tra cứu danh sách tài khoản thuộc về một khách hàng (theo CMND).
+-- ==========================================================================
+-- SP TRA CỨU TÀI KHOẢN THUỘC VỀ 1 KHÁCH HÀNG (theo CMND)
 -- KhachHang chỉ có GRANT EXECUTE trên SP này, không có SELECT trực tiếp trên TaiKhoan.
--- Điều này đảm bảo KhachHang không thể đọc TK của người khác dù kết nối thẳng vào DB.
+-- → Đảm bảo KH không thể đọc TK của người khác dù kết nối thẳng vào DB.
+-- ==========================================================================
 CREATE OR ALTER PROCEDURE sp_TaiKhoanKhachHang
-    @CMND nchar(10)
+    @CMND nchar(10)  -- Tham số: Số CMND của khách hàng đang đăng nhập
 AS
 BEGIN
-    SET NOCOUNT ON;
+    SET NOCOUNT ON;  -- Tắt thông báo đếm dòng ảnh hưởng
 
     -- ==========================================================================
-    -- BƯỚC 1: TRUY VẤN DANH SÁCH TÀI KHOẢN CỦA KHÁCH HÀNG
-    -- Mục đích: Lấy tất cả tài khoản có CMND khớp với khách hàng đang đăng nhập
+    -- TRUY VẤN DANH SÁCH TÀI KHOẢN CỦA KHÁCH HÀNG
     -- Đọc từ bảng TaiKhoan local (nhân bản full nên có đầy đủ dữ liệu)
-    -- Sắp xếp theo ngày mở TK mới nhất lên trước
     -- Bảo mật: KhachHang chỉ xem được TK của mình nhờ lọc theo @CMND
     -- ==========================================================================
-    SELECT RTRIM(tk.SOTK)  AS SOTK,
-           RTRIM(tk.CMND)  AS CMND,
-           tk.SODU,
-           RTRIM(tk.MACN)  AS MACN,
-           CONVERT(varchar, tk.NGAYMOTK, 103) AS NGAYMOTK
-    FROM TaiKhoan tk
-    WHERE RTRIM(tk.CMND) = RTRIM(@CMND)
-    ORDER BY tk.NGAYMOTK DESC;
+    SELECT RTRIM(tk.SOTK)  AS SOTK,    -- Số tài khoản, trim khoảng trắng (nchar)
+           RTRIM(tk.CMND)  AS CMND,    -- Số CMND chủ TK
+           tk.SODU,                     -- Số dư hiện tại của TK
+           RTRIM(tk.MACN)  AS MACN,    -- Mã chi nhánh quản lý TK
+           CONVERT(varchar, tk.NGAYMOTK, 103) AS NGAYMOTK  -- Ngày mở TK, format dd/mm/yyyy
+    FROM TaiKhoan tk                    -- Đọc từ bảng TaiKhoan local
+    WHERE RTRIM(tk.CMND) = RTRIM(@CMND)  -- Lọc chỉ TK có CMND khớp KH đăng nhập
+    ORDER BY tk.NGAYMOTK DESC;          -- Sắp theo ngày mở TK mới nhất lên trước
 END
 GO

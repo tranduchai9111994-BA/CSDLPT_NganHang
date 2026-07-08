@@ -1,4 +1,4 @@
-USE NGANHANG;
+USE NGANHANG;  -- Chọn database NGANHANG
 GO
 
 -- =========================================================================================
@@ -8,34 +8,38 @@ GO
 -- → Phải đọc cả Local + LINK1 để có đầy đủ giao dịch liên quan đến SOTK.
 -- =========================================================================================
 CREATE OR ALTER PROCEDURE SP_SaoKeTaiKhoan
-    @SOTK NVARCHAR(50),    -- Số tài khoản cần sao kê
-    @TUNGAY DATETIME,      -- Ngày bắt đầu khoảng sao kê
-    @DENNGAY DATETIME      -- Ngày kết thúc khoảng sao kê
+    @SOTK NVARCHAR(50),    -- Tham số: Số tài khoản cần sao kê
+    @TUNGAY DATETIME,      -- Tham số: Ngày bắt đầu khoảng sao kê
+    @DENNGAY DATETIME      -- Tham số: Ngày kết thúc khoảng sao kê
 AS
 BEGIN
-    SET NOCOUNT ON;  -- Tắt thông báo "xx rows affected"
+    SET NOCOUNT ON;  -- Tắt thông báo "xx rows affected" để tăng hiệu suất
 
     -- =========================================================================================
     -- BƯỚC 1: KIỂM TRA TÀI KHOẢN TỒN TẠI VÀ LẤY SỐ DƯ HIỆN TẠI
     -- TaiKhoan được nhân bản full → tồn tại local ở mọi site.
     -- Tuy nhiên SP vẫn thử Local trước, fallback LINK1 để chắc chắn.
     -- =========================================================================================
-    DECLARE @SODU_HIENTAI MONEY;
+    DECLARE @SODU_HIENTAI MONEY;  -- Biến lưu số dư hiện tại của tài khoản
 
-    -- Bước 1a: Tìm ở Local trước (nhanh, không tốn network)
-    SELECT @SODU_HIENTAI = SODU FROM TaiKhoan WHERE SOTK = @SOTK;
+    -- Bước 1a: Tìm số dư ở Local trước (nhanh hơn, không tốn băng thông mạng)
+    SELECT @SODU_HIENTAI = SODU   -- Gán số dư vào biến
+    FROM TaiKhoan                  -- Đọc từ bảng TaiKhoan local
+    WHERE SOTK = @SOTK;           -- Điều kiện: khớp số tài khoản
 
-    -- Bước 1b: Không có ở Local → tìm ở Linked Server (chi nhánh đối tác)
-    IF @SODU_HIENTAI IS NULL
+    -- Bước 1b: Nếu không tìm thấy ở Local → tìm ở Linked Server (chi nhánh đối tác)
+    IF @SODU_HIENTAI IS NULL  -- Kiểm tra biến vẫn NULL = chưa tìm thấy
     BEGIN
-        SELECT @SODU_HIENTAI = SODU FROM [LINK1].NGANHANG.dbo.TaiKhoan WHERE SOTK = @SOTK;
+        SELECT @SODU_HIENTAI = SODU                      -- Gán số dư từ server liên kết
+        FROM [LINK1].NGANHANG.dbo.TaiKhoan               -- Đọc qua Linked Server LINK1
+        WHERE SOTK = @SOTK;                               -- Điều kiện: khớp số tài khoản
     END
 
-    -- Bước 1c: Tìm cả 2 nơi không thấy → tài khoản không tồn tại
+    -- Bước 1c: Tìm cả 2 nơi không thấy → tài khoản không tồn tại → báo lỗi
     IF @SODU_HIENTAI IS NULL
     BEGIN
-        RAISERROR(N'Tài khoản không tồn tại trên hệ thống.', 16, 1);
-        RETURN;
+        RAISERROR(N'Tài khoản không tồn tại trên hệ thống.', 16, 1);  -- Ném lỗi severity 16
+        RETURN;  -- Kết thúc SP, không chạy tiếp
     END
 
     -- =========================================================================================
@@ -47,37 +51,40 @@ BEGIN
     --   RT (rút tiền), CT (chuyển tiền đi) → đã trừ khỏi số dư → cộng lại khi tính ngược
     -- Phải đọc từ cả Local + LINK1 vì GD nằm rải ở cả 2 chi nhánh.
     -- =========================================================================================
-    DECLARE @BIENDONG_SAU_TUNGAY MONEY = 0;  -- Tổng biến động từ @TUNGAY đến hiện tại
+    DECLARE @BIENDONG_SAU_TUNGAY MONEY = 0;  -- Biến tổng biến động, khởi tạo = 0
 
-    SELECT @BIENDONG_SAU_TUNGAY = ISNULL(SUM(
+    SELECT @BIENDONG_SAU_TUNGAY = ISNULL(SUM(  -- Tính tổng biến động, ISNULL chuyển NULL→0
         CASE
-            WHEN LOAIGD IN ('GT', 'NT') THEN SOTIEN    -- Gửi/Nhận → cộng vào số dư
-            WHEN LOAIGD IN ('RT', 'CT') THEN -SOTIEN   -- Rút/Chuyển → trừ khỏi số dư
-            ELSE 0
+            WHEN LOAIGD IN ('GT', 'NT') THEN SOTIEN    -- Gửi/Nhận → đã cộng vào số dư
+            WHEN LOAIGD IN ('RT', 'CT') THEN -SOTIEN   -- Rút/Chuyển → đã trừ khỏi số dư
+            ELSE 0                                      -- Loại khác (nếu có) → bỏ qua
         END
-    ), 0)  -- ISNULL: nếu không có GD nào → biến động = 0
+    ), 0)  -- ISNULL: nếu không có GD nào → tổng biến động = 0
     FROM (
         -- === GD tại Local (chi nhánh đang chạy SP) ===
-        -- GD gửi/rút tiền mặt
-        SELECT SOTIEN, LOAIGD FROM GD_GOIRUT WHERE SOTK = @SOTK AND NGAYGD >= @TUNGAY
+        SELECT SOTIEN, LOAIGD FROM GD_GOIRUT              -- GD gửi/rút tiền mặt tại local
+        WHERE SOTK = @SOTK AND NGAYGD >= @TUNGAY           -- Lọc theo TK và từ ngày bắt đầu
+        UNION ALL                                           -- Gộp thêm kết quả (giữ trùng)
+        SELECT SOTIEN, 'CT' AS LOAIGD FROM GD_CHUYENTIEN  -- GD chuyển tiền đi (TK này chuyển)
+        WHERE SOTK_CHUYEN = @SOTK AND NGAYGD >= @TUNGAY   -- Lọc TK chuyển khớp
         UNION ALL
-        -- GD chuyển tiền đi (TK này là TK chuyển → loại CT)
-        SELECT SOTIEN, 'CT' AS LOAIGD FROM GD_CHUYENTIEN WHERE SOTK_CHUYEN = @SOTK AND NGAYGD >= @TUNGAY
-        UNION ALL
-        -- GD nhận tiền (TK này là TK nhận → loại NT)
-        SELECT SOTIEN, 'NT' AS LOAIGD FROM GD_CHUYENTIEN WHERE SOTK_NHAN = @SOTK AND NGAYGD >= @TUNGAY
+        SELECT SOTIEN, 'NT' AS LOAIGD FROM GD_CHUYENTIEN  -- GD nhận tiền (TK này nhận)
+        WHERE SOTK_NHAN = @SOTK AND NGAYGD >= @TUNGAY     -- Lọc TK nhận khớp
 
-        UNION ALL
+        UNION ALL  -- Gộp thêm GD từ chi nhánh đối tác
 
         -- === GD tại Linked Server (chi nhánh đối tác) ===
-        SELECT SOTIEN, LOAIGD FROM [LINK1].NGANHANG.dbo.GD_GOIRUT WHERE SOTK = @SOTK AND NGAYGD >= @TUNGAY
+        SELECT SOTIEN, LOAIGD FROM [LINK1].NGANHANG.dbo.GD_GOIRUT          -- GD gửi/rút ở LINK1
+        WHERE SOTK = @SOTK AND NGAYGD >= @TUNGAY
         UNION ALL
-        SELECT SOTIEN, 'CT' AS LOAIGD FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN WHERE SOTK_CHUYEN = @SOTK AND NGAYGD >= @TUNGAY
+        SELECT SOTIEN, 'CT' AS LOAIGD FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN  -- GD chuyển đi ở LINK1
+        WHERE SOTK_CHUYEN = @SOTK AND NGAYGD >= @TUNGAY
         UNION ALL
-        SELECT SOTIEN, 'NT' AS LOAIGD FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN WHERE SOTK_NHAN = @SOTK AND NGAYGD >= @TUNGAY
-    ) AS LstBienDong;
+        SELECT SOTIEN, 'NT' AS LOAIGD FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN  -- GD nhận ở LINK1
+        WHERE SOTK_NHAN = @SOTK AND NGAYGD >= @TUNGAY
+    ) AS LstBienDong;  -- Alias cho subquery chứa tất cả biến động
 
-    -- Số dư đầu kỳ = số dư hiện tại − tổng biến động sau ngày bắt đầu
+    -- Công thức tính ngược: Số dư đầu kỳ = Số dư hiện tại − tổng biến động sau ngày bắt đầu
     DECLARE @SODU_DAUKY MONEY = @SODU_HIENTAI - @BIENDONG_SAU_TUNGAY;
 
     -- =========================================================================================
@@ -86,43 +93,48 @@ BEGIN
     -- CTE RunningBalance: dùng Window Function SUM() OVER() để tính số dư lũy kế
     --   sau mỗi giao dịch, bắt đầu từ @SODU_DAUKY
     -- =========================================================================================
-    ;WITH TransactionsInPeriod AS (
+    ;WITH TransactionsInPeriod AS (  -- CTE: tập hợp tất cả giao dịch trong kỳ sao kê
         -- === GD tại Local ===
-        SELECT NGAYGD, SOTIEN, LOAIGD FROM GD_GOIRUT WHERE SOTK = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        SELECT NGAYGD, SOTIEN, LOAIGD FROM GD_GOIRUT         -- GD gửi/rút local
+        WHERE SOTK = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY  -- Lọc trong khoảng thời gian
         UNION ALL
-        SELECT NGAYGD, SOTIEN, 'CT' AS LOAIGD FROM GD_CHUYENTIEN WHERE SOTK_CHUYEN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        SELECT NGAYGD, SOTIEN, 'CT' AS LOAIGD FROM GD_CHUYENTIEN    -- GD chuyển đi local
+        WHERE SOTK_CHUYEN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
         UNION ALL
-        SELECT NGAYGD, SOTIEN, 'NT' AS LOAIGD FROM GD_CHUYENTIEN WHERE SOTK_NHAN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        SELECT NGAYGD, SOTIEN, 'NT' AS LOAIGD FROM GD_CHUYENTIEN    -- GD nhận local
+        WHERE SOTK_NHAN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
 
-        UNION ALL
+        UNION ALL  -- Gộp thêm GD từ Linked Server
 
         -- === GD tại Linked Server ===
-        SELECT NGAYGD, SOTIEN, LOAIGD FROM [LINK1].NGANHANG.dbo.GD_GOIRUT WHERE SOTK = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        SELECT NGAYGD, SOTIEN, LOAIGD FROM [LINK1].NGANHANG.dbo.GD_GOIRUT         -- GD gửi/rút LINK1
+        WHERE SOTK = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
         UNION ALL
-        SELECT NGAYGD, SOTIEN, 'CT' AS LOAIGD FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN WHERE SOTK_CHUYEN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        SELECT NGAYGD, SOTIEN, 'CT' AS LOAIGD FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN  -- GD chuyển LINK1
+        WHERE SOTK_CHUYEN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
         UNION ALL
-        SELECT NGAYGD, SOTIEN, 'NT' AS LOAIGD FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN WHERE SOTK_NHAN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        SELECT NGAYGD, SOTIEN, 'NT' AS LOAIGD FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN  -- GD nhận LINK1
+        WHERE SOTK_NHAN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
     ),
-    RunningBalance AS (
+    RunningBalance AS (  -- CTE: tính số dư lũy kế cho từng giao dịch
         SELECT
-            NGAYGD,
-            LOAIGD,
-            SOTIEN,
+            NGAYGD,   -- Ngày giao dịch
+            LOAIGD,   -- Loại giao dịch (GT/RT/CT/NT)
+            SOTIEN,   -- Số tiền giao dịch
             -- Tính số dư lũy kế: bắt đầu từ số dư đầu kỳ, cộng/trừ theo từng GD
-            -- ROWS UNBOUNDED PRECEDING: tính tổng từ đầu đến dòng hiện tại
-            SODU_LUYKE = @SODU_DAUKY + SUM(
+            SODU_LUYKE = @SODU_DAUKY + SUM(  -- Số dư đầu kỳ + tổng tích lũy
                 CASE
-                    WHEN LOAIGD IN ('GT', 'NT') THEN SOTIEN    -- Gửi/Nhận → cộng
-                    WHEN LOAIGD IN ('RT', 'CT') THEN -SOTIEN   -- Rút/Chuyển → trừ
-                    ELSE 0
+                    WHEN LOAIGD IN ('GT', 'NT') THEN SOTIEN    -- Gửi/Nhận → cộng vào số dư
+                    WHEN LOAIGD IN ('RT', 'CT') THEN -SOTIEN   -- Rút/Chuyển → trừ khỏi số dư
+                    ELSE 0                                      -- Loại khác → không ảnh hưởng
                 END
-            ) OVER (ORDER BY NGAYGD ASC ROWS UNBOUNDED PRECEDING)
-        FROM TransactionsInPeriod
+            ) OVER (ORDER BY NGAYGD ASC ROWS UNBOUNDED PRECEDING)  -- Window: tính từ đầu đến dòng hiện tại
+        FROM TransactionsInPeriod  -- Đọc từ CTE chứa tất cả GD trong kỳ
     )
-    -- Trả về kết quả sắp xếp theo thời gian tăng dần
-    SELECT *
-    FROM RunningBalance
-    ORDER BY NGAYGD ASC;
+    -- Trả về kết quả cuối cùng, sắp xếp theo thời gian tăng dần
+    SELECT *              -- Lấy tất cả cột (NGAYGD, LOAIGD, SOTIEN, SODU_LUYKE)
+    FROM RunningBalance   -- Đọc từ CTE đã tính số dư lũy kế
+    ORDER BY NGAYGD ASC;  -- Sắp xếp theo ngày giao dịch tăng dần
 
 END
 GO

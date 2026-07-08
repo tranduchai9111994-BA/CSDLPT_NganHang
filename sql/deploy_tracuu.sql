@@ -54,11 +54,7 @@ GO
 --    Dùng bởi: baocao.js (NganHang liệt kê TK)
 --    GHI ĐÈ bản cũ (từ Replication) vì bản cũ đọc local
 -- ============================================================
-IF OBJECT_ID('dbo.sp_LietKeTaiKhoanTheoNgay', 'P') IS NOT NULL
-    DROP PROCEDURE dbo.sp_LietKeTaiKhoanTheoNgay;
-GO
-
-CREATE PROCEDURE [dbo].[sp_LietKeTaiKhoanTheoNgay]
+CREATE OR ALTER PROCEDURE [dbo].[sp_LietKeTaiKhoanTheoNgay]
     @MACN nchar(10) = NULL,
     @TUNGAY date = NULL,
     @DENNGAY date = NULL
@@ -70,14 +66,10 @@ BEGIN
            RTRIM(kh.HO) + ' ' + RTRIM(kh.TEN) AS HoTen,
            tk.SODU, RTRIM(tk.MACN) AS MACN,
            CONVERT(varchar, tk.NGAYMOTK, 103) AS NGAYMOTK
-    FROM (
-        SELECT SOTK, CMND, SODU, MACN, NGAYMOTK
-        FROM [LINK1].NGANHANG.dbo.TaiKhoan
-        UNION ALL
-        SELECT SOTK, CMND, SODU, MACN, NGAYMOTK
-        FROM [LINK2].NGANHANG.dbo.TaiKhoan
-    ) AS tk
-    LEFT JOIN KhachHang kh ON RTRIM(tk.CMND) = RTRIM(kh.CMND)
+    FROM [LINK1].NGANHANG.dbo.TaiKhoan tk
+    OUTER APPLY (
+        SELECT TOP 1 HO, TEN FROM KhachHang WHERE RTRIM(CMND) = RTRIM(tk.CMND)
+    ) kh
     WHERE (@MACN IS NULL OR RTRIM(tk.MACN) = RTRIM(@MACN))
       AND (@TUNGAY IS NULL OR CAST(tk.NGAYMOTK AS DATE) >= @TUNGAY)
       AND (@DENNGAY IS NULL OR CAST(tk.NGAYMOTK AS DATE) <= @DENNGAY)
@@ -165,7 +157,125 @@ PRINT N'✓ SP_DanhSachTrangThaiLogin (TRACUU) đã deploy.';
 GO
 
 -- ============================================================
--- 4. KIỂM TRA NHANH — chạy thử từng SP
+-- 4. SP_SaoKeTaiKhoan (phiên bản TRACUU)
+--    Dùng bởi: baocao.js (Sao kê GD theo SOTK)
+--    TRACUU không có GD_GOIRUT, GD_CHUYENTIEN local
+--    → Đọc qua LINK1 (BENTHANH) + LINK2 (TANDINH)
+-- ============================================================
+IF OBJECT_ID('dbo.SP_SaoKeTaiKhoan', 'P') IS NOT NULL
+    DROP PROCEDURE dbo.SP_SaoKeTaiKhoan;
+GO
+
+CREATE PROCEDURE [dbo].[SP_SaoKeTaiKhoan]
+    @SOTK NVARCHAR(50),
+    @TUNGAY DATETIME,
+    @DENNGAY DATETIME
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Bước 1: Lấy số dư hiện tại từ LINK1, fallback LINK2
+    DECLARE @SODU_HIENTAI MONEY;
+
+    SELECT @SODU_HIENTAI = SODU
+    FROM [LINK1].NGANHANG.dbo.TaiKhoan
+    WHERE SOTK = @SOTK;
+
+    IF @SODU_HIENTAI IS NULL
+    BEGIN
+        SELECT @SODU_HIENTAI = SODU
+        FROM [LINK2].NGANHANG.dbo.TaiKhoan
+        WHERE SOTK = @SOTK;
+    END
+
+    IF @SODU_HIENTAI IS NULL
+    BEGIN
+        RAISERROR(N'Tài khoản không tồn tại trên hệ thống.', 16, 1);
+        RETURN;
+    END
+
+    -- Bước 2: Tính số dư đầu kỳ (trừ ngược biến động từ @TUNGAY đến nay)
+    DECLARE @BIENDONG_SAU_TUNGAY MONEY = 0;
+
+    SELECT @BIENDONG_SAU_TUNGAY = ISNULL(SUM(
+        CASE
+            WHEN LOAIGD IN ('GT', 'NT') THEN SOTIEN
+            WHEN LOAIGD IN ('RT', 'CT') THEN -SOTIEN
+            ELSE 0
+        END
+    ), 0)
+    FROM (
+        -- GD_GOIRUT từ LINK1
+        SELECT SOTIEN, LOAIGD FROM [LINK1].NGANHANG.dbo.GD_GOIRUT
+        WHERE SOTK = @SOTK AND NGAYGD >= @TUNGAY
+        UNION ALL
+        SELECT SOTIEN, 'CT' FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_CHUYEN = @SOTK AND NGAYGD >= @TUNGAY
+        UNION ALL
+        SELECT SOTIEN, 'NT' FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_NHAN = @SOTK AND NGAYGD >= @TUNGAY
+        -- GD_GOIRUT từ LINK2
+        UNION ALL
+        SELECT SOTIEN, LOAIGD FROM [LINK2].NGANHANG.dbo.GD_GOIRUT
+        WHERE SOTK = @SOTK AND NGAYGD >= @TUNGAY
+        UNION ALL
+        SELECT SOTIEN, 'CT' FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_CHUYEN = @SOTK AND NGAYGD >= @TUNGAY
+        UNION ALL
+        SELECT SOTIEN, 'NT' FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_NHAN = @SOTK AND NGAYGD >= @TUNGAY
+    ) AS LstBienDong;
+
+    DECLARE @SODU_DAUKY MONEY = @SODU_HIENTAI - @BIENDONG_SAU_TUNGAY;
+
+    -- Bước 3: Chi tiết GD trong kỳ + số dư lũy kế
+    ;WITH TransactionsInPeriod AS (
+        -- LINK1
+        SELECT NGAYGD, SOTIEN, LOAIGD FROM [LINK1].NGANHANG.dbo.GD_GOIRUT
+        WHERE SOTK = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        UNION ALL
+        SELECT NGAYGD, SOTIEN, 'CT' FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_CHUYEN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        UNION ALL
+        SELECT NGAYGD, SOTIEN, 'NT' FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_NHAN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        -- LINK2
+        UNION ALL
+        SELECT NGAYGD, SOTIEN, LOAIGD FROM [LINK2].NGANHANG.dbo.GD_GOIRUT
+        WHERE SOTK = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        UNION ALL
+        SELECT NGAYGD, SOTIEN, 'CT' FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_CHUYEN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        UNION ALL
+        SELECT NGAYGD, SOTIEN, 'NT' FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_NHAN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    ),
+    RunningBalance AS (
+        SELECT
+            NGAYGD, LOAIGD, SOTIEN,
+            SODU_LUYKE = @SODU_DAUKY + SUM(
+                CASE
+                    WHEN LOAIGD IN ('GT', 'NT') THEN SOTIEN
+                    WHEN LOAIGD IN ('RT', 'CT') THEN -SOTIEN
+                    ELSE 0
+                END
+            ) OVER (ORDER BY NGAYGD ASC ROWS UNBOUNDED PRECEDING)
+        FROM TransactionsInPeriod
+    )
+    SELECT * FROM RunningBalance ORDER BY NGAYGD ASC;
+END
+GO
+
+GRANT EXECUTE ON dbo.SP_SaoKeTaiKhoan TO NganHang;
+GRANT EXECUTE ON dbo.SP_SaoKeTaiKhoan TO ChiNhanh;
+GRANT EXECUTE ON dbo.SP_SaoKeTaiKhoan TO KhachHang;
+GO
+
+PRINT N'✓ SP_SaoKeTaiKhoan (TRACUU) đã deploy.';
+GO
+
+-- ============================================================
+-- 5. KIỂM TRA NHANH — chạy thử từng SP
 -- ============================================================
 PRINT N'';
 PRINT N'=== TEST sp_DanhSachNhanVien ===';
@@ -178,6 +288,10 @@ GO
 
 PRINT N'=== TEST SP_DanhSachTrangThaiLogin ===';
 EXEC SP_DanhSachTrangThaiLogin;
+GO
+
+PRINT N'=== TEST SP_SaoKeTaiKhoan (TD0000001) ===';
+EXEC SP_SaoKeTaiKhoan @SOTK='TD0000001', @TUNGAY='2020-01-01', @DENNGAY='2030-12-31';
 GO
 
 PRINT N'';

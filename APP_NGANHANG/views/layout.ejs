@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>APP NGÂN HÀNG – CSDL Phân Tán</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a3c6e'/><text x='50%25' y='54%25' dominant-baseline='middle' text-anchor='middle' fill='white' font-size='14' font-weight='bold' font-family='Arial'>NH</text></svg>">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
     body { background: #f0f2f5; }
@@ -77,7 +78,9 @@
 
 <% if (user) { %>
 <nav>
-  <div class="brand">🏦 APP NGÂN HÀNG</div>
+  <div class="brand">
+    <span style="background:white;color:#1a3c6e;font-weight:bold;padding:2px 8px;border-radius:4px;margin-right:8px;font-size:14px;">NH</span>APP NGÂN HÀNG
+  </div>
   <div class="user-info">
     <span>👤 <%= user.HOTEN %></span>
     <span>🔑 <%= user.NHOM %></span>

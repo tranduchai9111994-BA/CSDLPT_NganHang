@@ -1,39 +1,42 @@
-USE NGANHANG;
+USE NGANHANG;  -- Chọn database NGANHANG
 GO
 
--- SP chạy RIÊNG trên TRACUU (SQL3).
+-- ==========================================================================
+-- SP DANH SÁCH NHÂN VIÊN (phiên bản TRACUU — chạy trên SQL3)
 -- TRACUU chỉ replicate bảng KhachHang, KHÔNG có NhanVien local.
 -- → Đọc NhanVien từ 2 chi nhánh qua LINK1 (BENTHANH) + LINK2 (TANDINH).
+-- ==========================================================================
 CREATE OR ALTER PROCEDURE [dbo].[sp_DanhSachNhanVien]
-    @MACN nchar(10) = NULL
+    @MACN nchar(10) = NULL  -- Tham số: mã chi nhánh, NULL = lấy tất cả
 AS
 BEGIN
-    SET NOCOUNT ON;
+    SET NOCOUNT ON;  -- Tắt thông báo đếm dòng ảnh hưởng
 
     -- ==========================================================================
-    -- BƯỚC 1: GỘP DANH SÁCH NHÂN VIÊN TỪ CẢ 2 CHI NHÁNH
-    -- Mục đích: TRACUU không có bảng NhanVien local
-    -- → Đọc từ LINK1 (BENTHANH) và LINK2 (TANDINH) rồi UNION ALL
+    -- GỘP NV TỪ 2 CHI NHÁNH, LỌC VÀ SẮP XẾP
     -- ==========================================================================
-    -- ==========================================================================
-    -- BƯỚC 2: LỌC THEO CHI NHÁNH (NẾU CÓ) VÀ SẮP XẾP
-    -- Mục đích: Nếu @MACN = NULL → lấy tất cả; có giá trị → lọc theo chi nhánh
-    -- Sắp xếp theo MACN, rồi theo HO + TEN để dễ tìm kiếm
-    -- ==========================================================================
-    SELECT RTRIM(MANV) AS MANV,
-           RTRIM(HO) AS HO, RTRIM(TEN) AS TEN,
-           RTRIM(HO) + ' ' + RTRIM(TEN) AS HoTen,
-           RTRIM(CMND) AS CMND,
-           RTRIM(MACN) AS MACN,
-           SODT, DIACHI, TrangThaiXoa
+    SELECT RTRIM(MANV) AS MANV,          -- Mã nhân viên, trim khoảng trắng
+           RTRIM(HO) AS HO,              -- Họ nhân viên
+           RTRIM(TEN) AS TEN,            -- Tên nhân viên
+           RTRIM(HO) + ' ' + RTRIM(TEN) AS HoTen,  -- Ghép họ + tên đầy đủ
+           RTRIM(CMND) AS CMND,          -- Số CMND
+           RTRIM(MACN) AS MACN,          -- Mã chi nhánh
+           SODT,                          -- Số điện thoại
+           DIACHI,                        -- Địa chỉ
+           TrangThaiXoa                   -- Trạng thái (0=đang làm, 1=đã xóa/chuyển)
     FROM (
+        -- Đọc NV từ BENTHANH qua LINK1
         SELECT MANV, HO, TEN, CMND, MACN, SODT, DIACHI, TrangThaiXoa
-        FROM [LINK1].NGANHANG.dbo.NhanVien
-        UNION ALL
+        FROM [LINK1].NGANHANG.dbo.NhanVien  -- Bảng NhanVien tại BENTHANH
+
+        UNION ALL  -- Gộp thêm (giữ bản ghi trùng)
+
+        -- Đọc NV từ TANDINH qua LINK2
         SELECT MANV, HO, TEN, CMND, MACN, SODT, DIACHI, TrangThaiXoa
-        FROM [LINK2].NGANHANG.dbo.NhanVien
-    ) AS AllNV
+        FROM [LINK2].NGANHANG.dbo.NhanVien  -- Bảng NhanVien tại TANDINH
+    ) AS AllNV  -- Alias cho subquery gộp 2 chi nhánh
+    -- Lọc theo chi nhánh nếu @MACN có giá trị; NULL = lấy tất cả
     WHERE (@MACN IS NULL OR RTRIM(MACN) = RTRIM(@MACN))
-    ORDER BY MACN, HO, TEN;
+    ORDER BY MACN, HO, TEN;  -- Sắp theo chi nhánh, rồi theo họ tên
 END
 GO

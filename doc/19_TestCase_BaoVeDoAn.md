@@ -10,9 +10,11 @@
 | Nhóm | SQL Login | Password | Chi nhánh chọn | Role |
 |------|-----------|----------|----------------|------|
 | ChiNhanh (BT) | `BT001` | `1` | `BENTHANH` | ChiNhanh |
-| ChiNhanh (TD) | `TD001` | `1` | `TANDINH` | ChiNhanh |
-| NganHang | `admin` | `1` | `TRACUU` | NganHang |
-| KhachHang | *(CMND KH, ví dụ `9999900001`)* | *(tự đặt khi tạo SQL Login)* | `BENTHANH` hoặc `TANDINH` | KhachHang |
+| ChiNhanh (TD) | `NV003` | `123456` | `TANDINH` | ChiNhanh |
+| NganHang | `admin` | `1` | `BENTHANH` hoặc `TANDINH` (hệ thống tự dùng TRACUU) | NganHang |
+| KhachHang | `1111111111` | `1111111111` | `BENTHANH` hoặc `TANDINH` | KhachHang |
+
+> **Lưu ý login page:** Dropdown chỉ còn BENTHANH và TANDINH. Admin/KhachHang chọn site nào cũng được — hệ thống tự điều phối. NganHang luôn được gán `effectiveServer = TRACUU` sau khi đăng nhập (xem `auth.js`). TRACUU bị ẩn khỏi dropdown vì chọn vào thì dữ liệu y chang BENTHANH — không có giá trị phân biệt với người dùng.
 
 ---
 
@@ -469,6 +471,31 @@ SELECT MANV, TrangThaiXoa FROM NhanVien WHERE MANV = 'BT001';
 SELECT * FROM NhanVien WHERE MANV LIKE 'TD%' ORDER BY MANV DESC;
 ```
 
+### Tình huống mở rộng — Chuyển rồi Phục hồi
+
+| ID | Bước | Thao tác | Trạng thái SQL1 (BT) | Trạng thái SQL2 (TD) |
+|----|------|----------|----------------------|----------------------|
+| 08f-1 | Khởi đầu | BT001 đang làm việc | BT001: `TrangThaiXoa=0` | *(không có)* |
+| 08f-2 | Chuyển | BT001 → TANDINH | BT001: `TrangThaiXoa=1` | TD00X: `TrangThaiXoa=0` |
+| 08f-3 | Phục hồi | Phục hồi BT001 tại BENTHANH | BT001: `TrangThaiXoa=0` | TD00X: `TrangThaiXoa=1` ✅ |
+| 08f-4 | Kiểm tra | Xem danh sách NV ở cả 2 chi nhánh | BT001 active | TD00X đã bị vô hiệu hóa |
+
+**Kỳ vọng khi phục hồi:**
+- BT001 tại BENTHANH → `TrangThaiXoa = 0` (đang làm việc)
+- TD00X tại TANDINH → `TrangThaiXoa = 1` (tự động vô hiệu hóa)
+- Thông báo: *"Đã phục hồi BT001 và tự động vô hiệu hóa TD00X ở chi nhánh kia"*
+
+**Trường hợp lỗi cũ (trước khi fix):** Phục hồi chỉ SET local → BT001 + TD00X đều active → cùng 1 người có 2 mã NV đang làm việc song song = inconsistency.
+
+**Cách fix:** SP `SP_PhuHoiNhanVien` dùng `BEGIN DISTRIBUTED TRAN` để đồng thời phục hồi local + deactivate bản ghi cùng CMND ở chi nhánh kia qua LINK1. Route phục hồi gọi `execSPAdmin` thay vì raw UPDATE.
+
+**Cách kiểm tra trong DB:**
+```sql
+-- Sau khi phục hồi BT001:
+SELECT MANV, TrangThaiXoa, MACN FROM NhanVien WHERE CMND = (SELECT CMND FROM NhanVien WHERE RTRIM(MANV)='BT001');
+-- Trên SQL2: SELECT MANV, TrangThaiXoa FROM NhanVien WHERE CMND = '...'
+```
+
 **Logic vấn đáp:** Chuyển NV là giao dịch phân tán trên bảng phân mảnh ngang. Xóa mềm (TrangThaiXoa=1) ở site cũ — không xóa hẳng vì cần giữ lịch sử kiểm toán. INSERT với MANV mới có prefix chi nhánh đích → đảm bảo quy ước đặt tên nhất quán. MSDTC bảo đảm: nếu INSERT sang chi nhánh mới fail → xóa mềm ở chi nhánh cũ cũng ROLLBACK.
 
 ---
@@ -677,3 +704,115 @@ Xác nhận 1 khách hàng (cùng CMND) có thể mở tài khoản ở cả 2 c
 | KhachHang xem dữ liệu thế nào? | Qua SP với filter CMND — không có SELECT trực tiếp | `14_SP_TaiKhoanKhachHang.sql` |
 | Nếu 1 node sập khi chuyển tiền? | MSDTC ROLLBACK toàn bộ (ACID đảm bảo) | `07_SP_ChuyenTien.sql:80–84` |
 | Window Function trong sao kê? | `SUM() OVER (ORDER BY NGAYGD ROWS UNBOUNDED PRECEDING)` = running balance | `06_SP_SaoKeTaiKhoan.sql:93–99` |
+
+---
+
+## TC-15: Phân quyền theo Nhóm — Yêu cầu đề bài
+
+> Kiểm thử toàn diện 3 nhóm người dùng theo đúng yêu cầu: NganHang xem tất cả, ChiNhanh toàn quyền chi nhánh mình, KhachHang chỉ xem sao kê.
+
+### TC-15A — Nhóm NganHang (Ban Giám Đốc)
+
+| ID | Thao tác | Kỳ vọng | Điểm phân tán |
+|----|----------|---------|---------------|
+| NH-01 | Login `admin/1`, chọn **BENTHANH** | Đăng nhập thành công, nav hiện `NganHang \| BENTHANH \| TRACUU` | effectiveServer tự gán TRACUU |
+| NH-02 | Login `admin/1`, chọn **TANDINH** | Đăng nhập thành công, **dữ liệu y chang NH-01** | Chứng minh site chọn không ảnh hưởng |
+| NH-03 | Vào **Khách hàng** → thấy KH cả 2 chi nhánh | BT + TD đều hiển thị | KhachHang replicate toàn vẹn lên TRACUU |
+| NH-04 | Vào **Nhân viên** → thấy NV cả 2 chi nhánh | BT + TD đều hiển thị | sp_DanhSachNhanVien dùng LINK1+LINK2 |
+| NH-05 | Vào **Tài khoản** → thấy TK cả 2 chi nhánh | BT + TD đều hiển thị | sp_DanhSachTaiKhoan dùng LINK1+LINK2 |
+| NH-06 | Kiểm tra nút thao tác trong danh sách KH/NV/TK | **Không thấy** Thêm / Sửa / Xóa / Đóng TK | UI ẩn theo `user.NHOM === 'ChiNhanh'` |
+| NH-07 | Thử URL thẳng `/khachhang/them` | **HTTP 403** — Không có quyền | `requireChiNhanh` middleware |
+| NH-08 | Thử URL `/nhanvien/them` | **HTTP 403** | |
+| NH-09 | Vào **Tạo tài khoản (Login)** → chọn nhóm **NganHang** → tạo | Thành công | NganHang tạo được cùng nhóm |
+| NH-10 | Tạo tài khoản → chọn nhóm **ChiNhanh** → tạo | Thành công | NganHang tạo được mọi nhóm |
+| NH-11 | Tạo tài khoản → chọn nhóm **KhachHang** → tạo | Thành công | |
+| NH-12 | Sao kê GD → chọn TK bất kỳ (BT hoặc TD) | Hiển thị lịch sử đầy đủ | SP_SaoKeTaiKhoan phiên bản TRACUU đọc LINK1+LINK2 |
+
+### TC-15B — Nhóm ChiNhanh
+
+| ID | Thao tác | Kỳ vọng | Điểm phân tán |
+|----|----------|---------|---------------|
+| CN-01 | Login `BT001/1`, chọn **BENTHANH** | Thành công, MACN=BENTHANH | |
+| CN-02 | Login `BT001/1`, chọn **TANDINH** | **Lỗi:** "Bạn không có quyền đăng nhập vào chi nhánh này" | SQL Login BT001 không tồn tại trên SQL2 |
+| CN-03 | Login `NV003/123456`, chọn **TANDINH** | Thành công, MACN=TANDINH | |
+| CN-04 | BT001 → Khách hàng → thấy **chỉ KH BENTHANH** | Không thấy KH TANDINH | Phân mảnh ngang theo MACN |
+| CN-05 | BT001 → **Thêm KH mới** | Thành công, KH lưu vào SQL1 | |
+| CN-06 | BT001 → **Sửa** thông tin KH | Thành công | |
+| CN-07 | BT001 → **Xóa** KH chưa có TK | Thành công | |
+| CN-08 | BT001 → **Mở TK** cho KH BENTHANH | Thành công, SOTK = `BT00000XX` | Prefix BT tránh trùng với TD |
+| CN-09 | BT001 → **Gửi tiền** TK BENTHANH | Thành công | |
+| CN-10 | BT001 → **Rút tiền** TK BENTHANH | Thành công (nếu đủ số dư) | |
+| CN-11 | BT001 → **Chuyển tiền** BT → TD | Thành công, MSDTC phân tán | SQL1+SQL2, 2-phase commit |
+| CN-12 | NV003 (TANDINH) → **Sao kê** TK `BT0000001` sau khi nhận chuyển tiền | Thấy GD nhận (NT) | SP đọc LINK bên TANDINH |
+| CN-13 | Tạo tài khoản → nhóm **ChiNhanh** → thành công | ✅ | ChiNhanh tạo được cùng nhóm |
+| CN-14 | Tạo tài khoản → nhóm **NganHang** → **bị từ chối** | Lỗi: "Quyền hạn không hợp lệ" | `quantri.js:82` chặn backend |
+
+### TC-15C — Nhóm KhachHang
+
+| ID | Thao tác | Kỳ vọng | Điểm phân tán |
+|----|----------|---------|---------------|
+| KH-01 | Login `1111111111/1111111111`, chọn **BENTHANH** | Thành công, sidebar **chỉ thấy "Sao kê GD"** | |
+| KH-02 | Login `1111111111/1111111111`, chọn **TANDINH** | Thành công, **dữ liệu y chang KH-01** | TaiKhoan replicate toàn vẹn |
+| KH-03 | Vào **Tài khoản của tôi** | Thấy đủ các TK của mình (kể cả TK ở chi nhánh khác) | sp_TaiKhoanKhachHang đọc local (TK replicate full) |
+| KH-04 | Thử URL `/khachhang` | Redirect hoặc 403 | requireLogin → KhachHang không có menu này |
+| KH-05 | Thử URL `/nhanvien` | Redirect hoặc 403 | |
+| KH-06 | Thử URL `/quantri/taotaikhoan` | 403 | |
+| KH-07 | Sao kê GD → chọn TK của mình → thấy lịch sử | ✅ | SP lọc theo CMND — chỉ thấy dữ liệu của mình |
+| KH-08 | **Không thể thấy** TK của người khác trong sao kê | Dropdown chỉ liệt kê TK của CMND đang login | sp_TaiKhoanKhachHang: `WHERE CMND = @CMND` |
+| KH-09 | KhachHang **không tạo được tài khoản** | Menu "Tạo tài khoản" không hiện trong sidebar | UI ẩn + backend không expose route cho KhachHang |
+
+---
+
+## TC-16: Giao dịch tài khoản xuyên chi nhánh
+
+> Kịch bản: TK `BT0000001` mở tại BENTHANH, nhưng có GD tại cả 2 chi nhánh (gửi tại BT, nhận chuyển tiền từ TD).
+
+### Chuẩn bị dữ liệu
+
+```sql
+-- Chạy trên SQL1 (BENTHANH): Gửi tiền tại BT
+EXEC sp_GuiTien @SOTK = 'BT0000001', @SOTIEN = 2000000, @MANV = 'BT001';
+
+-- Chạy qua App: Login BT001 → Chuyển tiền TD0000001 → BT0000001, số tiền 500000
+-- (GD này sẽ ghi vào GD_CHUYENTIEN trên SQL1, cập nhật TK trên SQL2 qua LINK1)
+```
+
+### Testcase
+
+| ID | Login | Thao tác | Kỳ vọng | Điểm phân tán |
+|----|-------|----------|---------|---------------|
+| GD-01 | `BT001` / BENTHANH | Chuyển `BT0000001` → `TD0000001`, 500.000đ | Thành công, MSDTC commit 2 server | SQL1 trừ, SQL2 cộng trong 1 distributed txn |
+| GD-02 | `1111111111` / BENTHANH | Sao kê `BT0000001` | Thấy đủ: GD gửi tại BT + GD nhận từ TD | SP đọc GD_GOIRUT local + GD_CHUYENTIEN local |
+| GD-03 | `1111111111` / TANDINH | Sao kê `BT0000001` | **Vẫn thấy đủ GD** như login BENTHANH | TaiKhoan replicate toàn vẹn; SP đọc LINK1 từ SQL2 |
+| GD-04 | `admin` / BENTHANH | Sao kê `BT0000001` | Thấy đủ GD từ cả 2 phía | SP_SaoKeTaiKhoan phiên bản TRACUU: LINK1+LINK2 |
+| GD-05 | `NV003` / TANDINH | Sao kê `TD0000001` | Thấy GD chuyển đi (CT) 500.000đ | GD_CHUYENTIEN ghi trên SQL1, SP TANDINH đọc qua LINK1 |
+
+### Điểm giải thích với thầy
+
+- **TK mở tại BT nhưng KH giao dịch tại TD:** Trong thực tế, KH cầm thẻ đến TD nộp tiền — nhân viên TD nhập SOTK của TK BT. Hệ thống hiện tại chỉ hỗ trợ qua chuyển tiền liên chi nhánh (chứ không hỗ trợ gửi tiền trực tiếp cho TK chi nhánh khác qua UI vì dropdown lọc theo MACN — đây là giới hạn thiết kế UI, không phải giới hạn kiến trúc phân tán).
+- **Sao kê thấy GD ở cả 2 nơi:** Chứng minh `SP_SaoKeTaiKhoan` gom dữ liệu từ `GD_GOIRUT` + `GD_CHUYENTIEN` tại cả 2 server qua LINK1/LINK2.
+
+---
+
+## TC-17: Tạo Login và Phân quyền — Chương trình quản lý tài khoản
+
+> Kiểm thử chức năng "Tạo tài khoản (Login)" — cho phép NganHang/ChiNhanh tạo login mới gắn với nhóm quyền.
+
+| ID | Người thực hiện | Nhóm tạo | Kỳ vọng |
+|----|-----------------|----------|---------|
+| TK-01 | `admin` (NganHang) | NganHang | Login mới tạo trên cả 3 server (BT/TD/TRACUU), gán role NganHang |
+| TK-02 | `admin` (NganHang) | ChiNhanh | Login mới tạo trên cả 3 server, gán role ChiNhanh |
+| TK-03 | `admin` (NganHang) | KhachHang | Login mới tạo trên cả 3 server, gán role KhachHang |
+| TK-04 | `BT001` (ChiNhanh) | ChiNhanh | Thành công |
+| TK-05 | `BT001` (ChiNhanh) | KhachHang | Thành công |
+| TK-06 | `BT001` (ChiNhanh) | NganHang | **Lỗi:** "Quyền hạn không hợp lệ. Bạn chỉ có thể tạo tài khoản nhóm ChiNhanh hoặc KhachHang" |
+| TK-07 | Dùng login mới (NganHang) vừa tạo để đăng nhập | — | Đăng nhập thành công, có quyền NganHang |
+| TK-08 | Dùng login mới (ChiNhanh) đăng nhập vào BENTHANH | — | Thành công (nếu login mapping đúng MACN=BENTHANH) |
+
+### Hệ thống xử lý
+
+- Code: [`routes/quantri.js:65–129`](../APP_NGANHANG/routes/quantri.js)
+- SP `SP_TaoTaiKhoan` chạy trên **cả 3 server** (BENTHANH, TANDINH, TRACUU) — idempotent (bỏ qua nếu đã tồn tại)
+- Kiểm tra phạm vi quyền tại backend: `quantri.js:79–83`
+- Login được lưu vào `QuanTriLogin` (bảng quản trị riêng) để theo dõi
+- **Tại sao tạo trên cả 3 server?** → KhachHang có thể login từ BENTHANH hoặc TANDINH (TaiKhoan replicate toàn vẹn); NganHang query TRACUU → cần login tồn tại trên TRACUU; ChiNhanh chỉ cần server mình nhưng tạo đồng bộ để an toàn.

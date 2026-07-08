@@ -171,10 +171,15 @@ router.post('/phuchoi', requireChiNhanh, async (req, res) => {
   const server = getServer(req);
   const { MANV } = req.body;
   try {
-    await querySQL(req, server, `
-      UPDATE NhanVien SET TrangThaiXoa = 0 WHERE RTRIM(MANV) = @manv
-    `, { manv: MANV });
-    res.redirect('/nhanvien?success=' + encodeURIComponent('Đã phục hồi nhân viên'));
+    // Dùng SP thay vì raw UPDATE để xử lý distributed transaction:
+    // phục hồi local + đồng thời deactivate bản ghi cùng CMND ở chi nhánh kia (nếu có).
+    // Tránh tình trạng 2 bản ghi cùng người đều TrangThaiXoa=0 sau khi chuyển chi nhánh rồi phục hồi.
+    const result = await execSPAdmin(server, 'SP_PhuHoiNhanVien', { MANV });
+    const deactivated = result?.recordset?.[0]?.MANV_DEACTIVATED;
+    const msg = deactivated
+      ? `Đã phục hồi ${MANV} và tự động vô hiệu hóa ${deactivated} ở chi nhánh kia`
+      : `Đã phục hồi nhân viên ${MANV}`;
+    res.redirect('/nhanvien?success=' + encodeURIComponent(msg));
   } catch (err) {
     res.redirect('/nhanvien?error=' + encodeURIComponent(err.message));
   }

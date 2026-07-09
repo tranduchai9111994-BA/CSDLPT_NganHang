@@ -203,7 +203,7 @@ Kiểm tra sinh số tài khoản không trùng theo prefix chi nhánh.
   - **Khác chi nhánh (cross-branch):** `MACN = KH_MACN`, SOTK prefix theo KH_MACN → gọi `execSPAdmin(khMacn, ...)` trên server có KH
 
 **Bước 4 — Gọi SP mở TK**
-- SP `sp_MoTaiKhoan`: kiểm tra SOTK chưa tồn tại, kiểm tra CMND tồn tại, INSERT INTO TaiKhoan
+- SP `sp_MoTaiKhoan`: kiểm tra SOTK chưa tồn tại, kiểm tra CMND tồn tại (check local trước → không có thì check `[LINK1]` đối tác, vì KhachHang phân mảnh ngang theo chi nhánh), INSERT INTO TaiKhoan
 - Cross-branch: INSERT chạy trên server có KH → thỏa cả **FK_TaiKhoan_KhachHang** (CMND) lẫn **FK_TaiKhoan_ChiNhanh** (MACN)
 - TaiKhoan nhân bản toàn vẹn → Merge Replication tự đồng bộ sang server đối tác
 - Constraint `CHECK (SODU >= 0)` trong DB chặn số dư âm

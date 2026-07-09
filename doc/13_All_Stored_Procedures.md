@@ -197,7 +197,11 @@ BEGIN
         RETURN;
     END
 
-    IF NOT EXISTS (SELECT 1 FROM LINK0.NGANHANG.dbo.KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
+    -- KhachHang phân mảnh ngang theo chi nhánh (filter row) → local chỉ có KH
+    -- của chi nhánh mình. Check local trước, không có thì check LINK1 (đối tác)
+    -- để hỗ trợ mở TK cross-branch mà không phụ thuộc NGUON.
+    IF NOT EXISTS (SELECT 1 FROM KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
+       AND NOT EXISTS (SELECT 1 FROM [LINK1].NGANHANG.dbo.KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
     BEGIN
         RAISERROR(N'Khách hàng không tồn tại trên hệ thống.',16,1);
         RETURN;
@@ -210,7 +214,7 @@ END
 
 > **Flow:**
 > 1. Kiểm tra SOTK chưa tồn tại trong `TaiKhoan` local.
-> 2. Kiểm tra CMND tồn tại qua `LINK0` (Publisher NGUON).
+> 2. Kiểm tra CMND tồn tại: check `KhachHang` local trước (KH cùng chi nhánh), không có thì check qua `[LINK1]` (KH chi nhánh đối tác). Nhờ SQL short-circuit `AND`, đa số case (KH cùng chi nhánh) chỉ cần 1 query local, không tốn network.
 > 3. INSERT vào `TaiKhoan` local → Merge Replication tự đồng bộ sang các site khác.
 >
 > **Cross-branch (app layer):** KhachHang phân mảnh ngang + TaiKhoan có FK trên cả CMND và MACN → cả 2 FK chỉ thỏa trên server có KH. `taikhoan.js` POST `/mo` so sánh `KH_MACN` (chi nhánh KH) vs `user.MACN`:

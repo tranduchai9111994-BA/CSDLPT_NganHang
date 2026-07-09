@@ -26,10 +26,11 @@ BEGIN
     END
 
     -- Kiểm tra khách hàng có tồn tại trên hệ thống không.
-    -- Dùng LINK0 (trỏ về NGUON) thay vì bảng KhachHang local vì KhachHang
-    -- phân mảnh ngang theo chi nhánh — LINK0 cho phép xác thực CMND dù
-    -- KH thuộc chi nhánh nào (phục vụ cả trường hợp mở TK cross-branch).
-    IF NOT EXISTS (SELECT 1 FROM LINK0.NGANHANG.dbo.KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
+    -- KhachHang phân mảnh ngang theo chi nhánh (filter row) → local chỉ có KH
+    -- của chi nhánh mình. Check local trước, không có thì check LINK1 (đối tác)
+    -- để hỗ trợ mở TK cross-branch mà không phụ thuộc NGUON.
+    IF NOT EXISTS (SELECT 1 FROM KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
+       AND NOT EXISTS (SELECT 1 FROM [LINK1].NGANHANG.dbo.KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
     BEGIN
         RAISERROR(N'Khách hàng không tồn tại trên hệ thống.',16,1);
         RETURN;

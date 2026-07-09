@@ -1,4 +1,4 @@
-USE NGANHANG;  -- Chọn database NGANHANG
+﻿USE NGANHANG;  -- Chọn database NGANHANG
 GO
 
 -- ==========================================================================

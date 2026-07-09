@@ -1,4 +1,4 @@
-USE NGANHANG;  -- Chọn database NGANHANG để tạo SP
+﻿USE NGANHANG;  -- Chọn database NGANHANG để tạo SP
 GO
 
 -- SP LIỆT KÊ KHÁCH HÀNG

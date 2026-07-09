@@ -1,4 +1,4 @@
--- =========================================================================================
+﻿-- =========================================================================================
 -- SCRIPT: RESET MẬT KHẨU TẤT CẢ TÀI KHOẢN DEMO VỀ '1'
 -- Chạy trên TẤT CẢ server (SQL1, SQL2, SQL3, NGUON) hoặc đúng server chứa login.
 -- Login chỉ tồn tại ở server nào thì ALTER chỉ có tác dụng ở server đó.

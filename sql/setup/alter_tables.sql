@@ -1,4 +1,4 @@
-USE NGANHANG;
+﻿USE NGANHANG;
 GO
 
 -- Cập nhật kiểu dữ liệu cột HO

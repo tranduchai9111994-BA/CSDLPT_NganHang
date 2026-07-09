@@ -1,4 +1,4 @@
--- =========================================================================================
+﻿-- =========================================================================================
 -- SCRIPT: TẠO TÀI KHOẢN KHÁCH HÀNG DEMO
 -- Mục đích: Tạo SQL Login + DB User + Role KhachHang cho các KH có trong seed_data.sql
 --           để có thể test TC-01e (KhachHang đăng nhập vào ứng dụng).

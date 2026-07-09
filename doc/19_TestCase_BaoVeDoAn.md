@@ -54,8 +54,8 @@ Kiểm tra cơ chế đăng nhập dùng chính SQL Login (không dùng bảng u
 | 01a | username=`BT001`, password=`1`, chi nhánh=`BENTHANH` | Đăng nhập thành công, NHOM=ChiNhanh, MACN=BENTHANH |
 | 01b | username=`BT001`, password=`saimat`, chi nhánh=`BENTHANH` | Lỗi: "Sai tài khoản hoặc mật khẩu" |
 | 01c | username=`TD001`, password=`1`, chi nhánh=`BENTHANH` | Lỗi: "Sai tài khoản hoặc mật khẩu" *(xem giải thích bên dưới)* |
-| 01d | username=`admin`, password=`1`, chi nhánh=`TRACUU` | Thành công, NHOM=NganHang, MACN=TRACUU *(xem giải thích bên dưới)* |
-| 01e | username=`1111111111`, password=`1`, chi nhánh=`BENTHANH` | Thành công, NHOM=KhachHang *(xem điều kiện tiên quyết bên dưới)* |
+| 01d | username=`admin`, password=`1`, chi nhánh=`BENTHANH` | Thành công, NHOM=NganHang, MACN=TRACUU *(xem giải thích bên dưới)* |
+| 01e | username=`1111111111`, password=`123456`, chi nhánh=`BENTHANH` | Thành công, NHOM=KhachHang *(xem điều kiện tiên quyết bên dưới)* |
 
 ### Hệ thống xử lý chi tiết
 

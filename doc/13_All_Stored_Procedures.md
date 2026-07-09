@@ -5,10 +5,9 @@ Tài liệu này tổng hợp code mới nhất của tất cả các Stored Pro
 **[Cập nhật 19/06/2026] Thông tin đưa vào Article (Replication):**
 - **PUB_BENTHANH & PUB_TANDINH:** Đã add toàn bộ 11 SP nghiệp vụ bên dưới vào Article (chế độ Replicate stored procedure definitions).
 - **PUB_TRACUU:** Article gồm: `sp_Login_App`, `SP_TaoTaiKhoan`, `sp_LietKeKhachHang`, `sp_LietKeTaiKhoanTheoNgay`, `sp_DanhSachTaiKhoan` (tổng 5 SP).
-- **[Cập nhật 05/07/2026] SP riêng của TRACUU** (không qua Replication, cài bằng `setup_db.js` hoặc [`sql/deploy_tracuu.sql`](../sql/deploy_tracuu.sql)):
-  - `sp_SaoKeToanBo` — gộp GD_GOIRUT + GD_CHUYENTIEN từ LINK1+LINK2
-  - `sp_DanhSachNhanVien` — gộp NhanVien từ LINK1+LINK2 (TRACUU không có NhanVien local)
-  - `SP_DanhSachTrangThaiLogin` — phiên bản TRACUU, đọc NhanVien qua LINK, KhachHang+QuanTriLogin local
+- **[Cập nhật 05/07/2026] SP riêng của TRACUU** (không qua Replication):
+  - Cài bằng `setup_db.js` (`alterSpSaoKeToanBo`): `sp_SaoKeToanBo` — gộp GD_GOIRUT + GD_CHUYENTIEN từ LINK1+LINK2
+  - Cài bằng [`sql/deploy_tracuu.sql`](../sql/deploy_tracuu.sql): `sp_DanhSachNhanVien` — gộp NhanVien từ LINK1+LINK2 (TRACUU không có NhanVien local); `sp_LietKeTaiKhoanTheoNgay`; `SP_DanhSachTrangThaiLogin` — phiên bản TRACUU, đọc NhanVien qua LINK, KhachHang+QuanTriLogin local; `SP_SaoKeTaiKhoan` — phiên bản TRACUU (per-tài khoản), đọc GD qua LINK1+LINK2
 - **[Cập nhật 05/07/2026] Lưu ý quan trọng về TaiKhoan:** TaiKhoan replicate full (giống ChiNhanh) → mỗi site đã có đủ TK cả 2 chi nhánh. SP trên TRACUU chỉ đọc từ **LINK1** (không UNION ALL LINK1+LINK2, vì sẽ bị duplicate). JOIN KhachHang local dùng **OUTER APPLY TOP 1** để tránh nhân bản kết quả.
 - **Lưu ý:** Đã xoá bỏ `SP_DangNhap` (không phải là Article, xoá thành công bằng `DROP PROCEDURE IF EXISTS`).
 
@@ -20,7 +19,7 @@ Tài liệu này tổng hợp code mới nhất của tất cả các Stored Pro
 **Gọi bởi:** `auth.js` – POST `/login`
 
 ```sql
-CREATE   PROCEDURE [dbo].[sp_Login_App]
+CREATE OR ALTER PROCEDURE [dbo].[sp_Login_App]
     @LoginName nvarchar(128)
 AS
 BEGIN
@@ -52,15 +51,23 @@ BEGIN
 
     IF @NHOM != 'KhachHang'
     BEGIN
-        SELECT @MANV = MANV, @HOTEN = RTRIM(HO) + ' ' + RTRIM(TEN), @MACN = MACN
-        FROM NhanVien
-        WHERE RTRIM(MANV) = @DBUserName AND TrangThaiXoa = 0;
+        -- SQL3/TRACUU không có bảng NhanVien → bỏ qua bước này (OBJECT_ID trả NULL)
+        IF OBJECT_ID('dbo.NhanVien', 'U') IS NOT NULL
+        BEGIN
+            SELECT @MANV = MANV, @HOTEN = RTRIM(HO) + ' ' + RTRIM(TEN), @MACN = MACN
+            FROM NhanVien
+            WHERE RTRIM(MANV) = @DBUserName AND TrangThaiXoa = 0;
+        END
 
         IF @MANV IS NULL AND @NHOM = 'NganHang'
         BEGIN
             SET @MANV = @DBUserName;
             SET @HOTEN = N'Quan Tri Vien (Ban Giam Doc)';
-            SET @MACN = (SELECT TOP 1 MACN FROM ChiNhanh);
+            -- SQL3/TRACUU không có bảng ChiNhanh → hardcode MACN = 'TRACUU'
+            IF OBJECT_ID('dbo.ChiNhanh', 'U') IS NOT NULL
+                SET @MACN = (SELECT TOP 1 MACN FROM ChiNhanh);
+            ELSE
+                SET @MACN = N'TRACUU';
         END
     END
     ELSE
@@ -86,10 +93,12 @@ END
 > 2. **Resolve DB username:** JOIN `sys.database_principals` ↔ `sys.server_principals` theo SID để lấy DB user tương ứng với login. Nếu không tìm thấy → fallback về chính `@LoginName`.
 > 3. **Kiểm tra Role:** Truy vấn `sys.database_role_members` để xác định user thuộc nhóm nào trong `{NganHang, ChiNhanh, KhachHang}`. Nếu không có role → RAISERROR.
 > 4. **Lấy thông tin theo nhóm:**
->    - `ChiNhanh` / `NganHang`: đọc `NhanVien` (TrangThaiXoa=0), lấy MANV + HoTen + MACN.
->    - `NganHang` không tìm thấy trong NhanVien → dùng fallback "Quan Tri Vien" + MACN đầu tiên trong ChiNhanh.
+>    - `ChiNhanh` / `NganHang`: đọc `NhanVien` (TrangThaiXoa=0), lấy MANV + HoTen + MACN — nhưng chỉ khi `OBJECT_ID('dbo.NhanVien','U')` tồn tại, vì **SQL3/TRACUU không có bảng NhanVien local** (chỉ replicate KhachHang).
+>    - `NganHang` không tìm thấy trong NhanVien → fallback "Quan Tri Vien (Ban Giam Doc)". MACN lấy từ `ChiNhanh` nếu bảng đó tồn tại; trên TRACUU (không có bảng `ChiNhanh`) → hardcode `MACN = 'TRACUU'`.
 >    - `KhachHang`: đọc `KhachHang` theo CMND = DBUserName.
 > 5. **Trả về:** 1 row gồm USERNAME, MANV, HOTEN, NHOM, MACN → app lưu vào session.
+>
+> **Lưu ý TRACUU:** Vì SP này được replicate (Article PUB_TRACUU) và chạy y nguyên trên cả 3 site, nhưng TRACUU thiếu bảng `NhanVien`/`ChiNhanh`, các bước đọc 2 bảng đó được bọc trong `IF OBJECT_ID(...) IS NOT NULL` để không lỗi khi NganHang đăng nhập trên TRACUU.
 
 ---
 
@@ -129,7 +138,7 @@ END
 **Gọi bởi:** `khachhang.js` – POST `/khachhang/them`
 
 ```sql
-CREATE   PROCEDURE [dbo].[sp_ThemKhachHang]
+CREATE OR ALTER PROCEDURE [dbo].[sp_ThemKhachHang]
     @CMND nchar(10),
     @HO nvarchar(40),
     @TEN nvarchar(10),
@@ -173,7 +182,7 @@ END
 **Gọi bởi:** `taikhoan.js` – POST `/taikhoan/mo` (qua `execSP` hoặc `execSPAdmin` cho cross-branch)
 
 ```sql
-CREATE   PROCEDURE [dbo].[sp_MoTaiKhoan]
+CREATE OR ALTER PROCEDURE [dbo].[sp_MoTaiKhoan]
     @SOTK nchar(9),
     @CMND nchar(10),
     @SODU money,
@@ -392,7 +401,7 @@ END
 ```sql
 -- TaiKhoan được NHÂN BẢN TOÀN VẸN → mọi TK đều tồn tại local.
 -- Dùng MACN để phân biệt: cùng CN → ghi local, khác CN → ghi qua LINK1.
-CREATE   PROCEDURE [dbo].[sp_ChuyenTien]
+CREATE OR ALTER PROCEDURE [dbo].[sp_ChuyenTien]
     @SOTK_CHUYEN nchar(9),
     @SOTK_NHAN   nchar(9),
     @SOTIEN      money,
@@ -492,8 +501,10 @@ END
 **Chạy trên:** BENTHANH / TANDINH  
 **Gọi bởi:** `baocao.js` – GET `/baocao/saoke` (ChiNhanh và KhachHang)
 
+> **Lưu ý:** TRACUU có **phiên bản riêng** của SP này (đọc GD qua LINK1+LINK2 thay vì local) — xem [SP_SaoKeTaiKhoan (TRACUU)](#sp_saoketaikhoan-tracuu--dùng-link1link2) ở phần TRACUU bên dưới. NganHang xem sao kê 1 TK cụ thể sẽ gọi phiên bản TRACUU này.
+
 ```sql
-CREATE   PROCEDURE SP_SaoKeTaiKhoan
+CREATE OR ALTER PROCEDURE SP_SaoKeTaiKhoan
     @SOTK NVARCHAR(50),
     @TUNGAY DATETIME,
     @DENNGAY DATETIME
@@ -632,69 +643,120 @@ END
 **Gọi bởi:** `nhanvien.js` – POST `/nhanvien/chuyen` (qua `execSPAdmin`)
 
 ```sql
-CREATE PROCEDURE [dbo].[sp_ChuyenNhanVien]
-    @MANV nchar(10),
-    @MACN_MOI nchar(10)
+CREATE OR ALTER PROCEDURE SP_ChuyenNhanVien
+    @MANV     NVARCHAR(10),  -- Tham số: Mã nhân viên cần chuyển
+    @MACN_MOI NVARCHAR(10)   -- Tham số: Mã chi nhánh đích
 AS
 BEGIN
-    SET NOCOUNT ON;
-    SET XACT_ABORT ON;
+    SET XACT_ABORT ON;  -- Lỗi runtime → tự ROLLBACK (bắt buộc cho distributed tran)
+    SET NOCOUNT ON;     -- Tắt thông báo đếm dòng ảnh hưởng
 
-    -- Kiểm tra nhân viên có tồn tại và đang làm việc không
-    IF NOT EXISTS (
-        SELECT 1 FROM NhanVien 
-        WHERE RTRIM(MANV) = RTRIM(@MANV) AND TrangThaiXoa = 0
-    )
+    -- BƯỚC 1: KIỂM TRA NHÂN VIÊN TỒN TẠI VÀ ĐANG LÀM VIỆC
+    DECLARE @MACN_HIENTAI NVARCHAR(10);
+    DECLARE @TRANGTHAIXOA BIT;
+
+    SELECT @MACN_HIENTAI = RTRIM(MACN),
+           @TRANGTHAIXOA = TrangThaiXoa
+    FROM NhanVien
+    WHERE RTRIM(MANV) = RTRIM(@MANV);
+
+    IF @MACN_HIENTAI IS NULL
     BEGIN
-        RAISERROR(N'Nhân viên không tồn tại hoặc đã nghỉ việc tại chi nhánh này.', 16, 1);
+        RAISERROR(N'Nhân viên không tồn tại ở chi nhánh này.', 16, 1);
         RETURN;
     END
 
+    IF @TRANGTHAIXOA = 1
+    BEGIN
+        RAISERROR(N'Nhân viên này đã bị xóa hoặc đã chuyển công tác trước đó.', 16, 1);
+        RETURN;
+    END
+
+    -- BƯỚC 2: KIỂM TRA CHI NHÁNH MỚI KHÁC CHI NHÁNH HIỆN TẠI
+    IF @MACN_HIENTAI = @MACN_MOI
+    BEGIN
+        RAISERROR(N'Chi nhánh mới phải khác chi nhánh hiện tại.', 16, 1);
+        RETURN;
+    END
+
+    -- BƯỚC 3: SINH MÃ NHÂN VIÊN MỚI VỚI PREFIX CỦA CHI NHÁNH ĐÍCH
+    -- Mỗi chi nhánh có prefix riêng: BENTHANH → 'BT', TANDINH → 'TD'
+    -- Tìm MANV lớn nhất ở chi nhánh đích qua LINK1, +1 để có mã mới
+    DECLARE @PREFIX     NVARCHAR(2);
+    DECLARE @LAST_MANV  NVARCHAR(10);
+    DECLARE @NEXT_NUM   INT;
+    DECLARE @MANV_MOI   NVARCHAR(10);
+
+    SET @PREFIX = CASE @MACN_MOI WHEN 'BENTHANH' THEN 'BT' ELSE 'TD' END;
+
+    SELECT TOP 1 @LAST_MANV = RTRIM(MANV)
+    FROM [LINK1].NGANHANG.dbo.NhanVien
+    WHERE RTRIM(MANV) LIKE @PREFIX + '%'
+    ORDER BY MANV DESC;
+
+    IF @LAST_MANV IS NULL
+        SET @NEXT_NUM = 1;
+    ELSE
+        SET @NEXT_NUM = CAST(SUBSTRING(@LAST_MANV, LEN(@PREFIX) + 1, 10) AS INT) + 1;
+
+    SET @MANV_MOI = @PREFIX + RIGHT('000' + CAST(@NEXT_NUM AS NVARCHAR(5)), 3);
+
+    -- BƯỚC 4: KIỂM TRA TRÙNG MÃ (RACE CONDITION)
+    -- Nhiều người cùng chuyển NV đồng thời → vòng lặp đảm bảo mã mới không trùng
+    WHILE EXISTS (
+        SELECT 1 FROM [LINK1].NGANHANG.dbo.NhanVien WHERE RTRIM(MANV) = @MANV_MOI
+    )
+    BEGIN
+        SET @NEXT_NUM = @NEXT_NUM + 1;
+        SET @MANV_MOI = @PREFIX + RIGHT('000' + CAST(@NEXT_NUM AS NVARCHAR(5)), 3);
+    END
+
+    -- BƯỚC 5: THỰC HIỆN GIAO DỊCH PHÂN TÁN
     BEGIN TRY
-        -- Bắt đầu giao dịch phân tán (vì sẽ thao tác trên 2 server khác nhau)
-        BEGIN DISTRIBUTED TRANSACTION;
-        
-        -- Đọc thông tin nhân viên trước khi chuyển
-        DECLARE @HO nvarchar(50), @TEN nvarchar(10), @CMND nchar(10);
-        DECLARE @DIACHI nvarchar(100), @PHAI nvarchar(3), @SODT nvarchar(15);
-        
-        SELECT @HO = HO, @TEN = TEN, @CMND = CMND, 
-               @DIACHI = DIACHI, @PHAI = PHAI, @SODT = SODT
-        FROM NhanVien 
+        BEGIN DISTRIBUTED TRAN;
+
+        -- Đánh dấu xóa mềm tại chi nhánh hiện tại (KHÔNG xóa hẳn, giữ lịch sử)
+        UPDATE NhanVien
+        SET TrangThaiXoa = 1
         WHERE RTRIM(MANV) = RTRIM(@MANV);
 
-        -- ✅ ĐÚNG ĐỀ BÀI: Đánh dấu đã chuyển ở chi nhánh cũ (KHÔNG xóa hẳn)
-        UPDATE NhanVien 
-        SET TrangThaiXoa = 1 
+        -- Chèn bản ghi mới vào chi nhánh đích qua LINK1, với MANV mới sinh
+        INSERT INTO [LINK1].NGANHANG.dbo.NhanVien
+               (MANV, CMND, HO, TEN, DIACHI, PHAI, SODT, MACN, TrangThaiXoa)
+        SELECT @MANV_MOI, CMND, HO, TEN, DIACHI, PHAI, SODT, @MACN_MOI, 0
+        FROM NhanVien
         WHERE RTRIM(MANV) = RTRIM(@MANV);
-        
-        -- Chèn bản ghi mới vào chi nhánh đối tác qua Linked Server
-        -- LINK1 luôn trỏ đến chi nhánh đối tác (quy tắc cố định)
-        INSERT INTO [LINK1].NGANHANG.dbo.NhanVien 
-            (MANV, HO, TEN, CMND, DIACHI, PHAI, SODT, MACN, TrangThaiXoa)
-        VALUES 
-            (@MANV, @HO, @TEN, @CMND, @DIACHI, @PHAI, @SODT, @MACN_MOI, 0);
-        -- TrangThaiXoa = 0 ở chi nhánh mới: nhân viên đang hoạt động
 
-        COMMIT TRANSACTION;
+        COMMIT TRAN;
+
+        -- Trả về mã NV mới + chi nhánh mới cho app hiển thị
+        SELECT @MANV_MOI AS MANV_MOI,
+               @MACN_MOI AS MACN_MOI;
+
     END TRY
     BEGIN CATCH
-        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
-        DECLARE @ErrMsg nvarchar(4000) = ERROR_MESSAGE();
-        RAISERROR(@ErrMsg, 16, 1);
+        IF @@TRANCOUNT > 0 ROLLBACK TRAN;
+        DECLARE @ErrMsg      NVARCHAR(4000) = ERROR_MESSAGE();
+        DECLARE @ErrSeverity INT           = ERROR_SEVERITY();
+        DECLARE @ErrState    INT           = ERROR_STATE();
+        RAISERROR(@ErrMsg, @ErrSeverity, @ErrState);
     END CATCH
 END
 ```
 
 > **Flow:**
 > 1. **Nhận input:** `@MANV` (mã NV cần chuyển), `@MACN_MOI` (chi nhánh đích).
-> 2. **Validate:** NV phải tồn tại trong `NhanVien` local với `TrangThaiXoa=0` (đang hoạt động).
-> 3. **Đọc thông tin NV** để copy sang chi nhánh mới.
-> 4. **DISTRIBUTED TRANSACTION (MSDTC):**
->    - `UPDATE NhanVien SET TrangThaiXoa=1` — đánh dấu **không xóa** ở chi nhánh cũ (soft-delete, lưu lịch sử).
->    - `INSERT [LINK1].NGANHANG.dbo.NhanVien` — tạo bản ghi mới với `TrangThaiXoa=0` tại chi nhánh mới qua LINK1.
-> 5. **Kết quả:** NV có 2 bản ghi: chi nhánh cũ (TrangThaiXoa=1), chi nhánh mới (TrangThaiXoa=0).
-> 6. **App layer:** `nhanvien.js` xác định `serverHienTai` = server ngược với `@MACN_MOI` để gọi SP trên đúng server.
+> 2. **Validate bước 1:** NV phải tồn tại trong `NhanVien` local; nếu `TrangThaiXoa=1` (đã nghỉ/đã chuyển trước đó) → RAISERROR riêng, không cho chuyển lại.
+> 3. **Validate bước 2:** `@MACN_MOI` phải khác chi nhánh hiện tại, nếu không → RAISERROR "Chi nhánh mới phải khác chi nhánh hiện tại."
+> 4. **Sinh MANV mới (khác với bản cũ):** NV chuyển chi nhánh sẽ có **mã nhân viên mới** theo prefix chi nhánh đích (`BT`/`TD`) — tìm MANV lớn nhất cùng prefix qua `LINK1`, `+1` để sinh mã tiếp theo, format 3 chữ số (VD: `BT001`).
+> 5. **Chống trùng mã (race condition):** `WHILE EXISTS (...)` kiểm tra lại qua LINK1, nếu mã đã bị chiếm (do 2 giao dịch chạy đồng thời) thì tăng dần `@NEXT_NUM` cho đến khi tìm được mã trống.
+> 6. **DISTRIBUTED TRANSACTION (MSDTC):**
+>    - `UPDATE NhanVien SET TrangThaiXoa=1` — đánh dấu **không xóa** NV ở chi nhánh cũ (soft-delete, lưu lịch sử) — vẫn giữ `@MANV` cũ.
+>    - `INSERT [LINK1].NGANHANG.dbo.NhanVien` — copy toàn bộ thông tin NV (trừ MANV/MACN) sang chi nhánh mới với `MANV = @MANV_MOI`, `MACN = @MACN_MOI`, `TrangThaiXoa=0`.
+> 7. **Trả về:** `MANV_MOI`, `MACN_MOI` để app hiển thị mã nhân viên mới sau khi chuyển.
+> 8. **App layer:** `nhanvien.js` xác định `serverHienTai` = server ngược với `@MACN_MOI` để gọi SP trên đúng server (qua `execSPAdmin`), nhưng hiện chỉ redirect với thông báo thành công — chưa hiển thị `MANV_MOI` trả về từ SP.
+>
+> **Khác biệt so với bản cũ:** Trước đây SP giữ nguyên `@MANV` khi chuyển chi nhánh (chỉ đổi MACN). Bản hiện tại **sinh mã nhân viên mới theo prefix chi nhánh đích** mỗi lần chuyển, kèm cơ chế chống trùng mã khi nhiều người chuyển đồng thời.
 
 ---
 
@@ -793,48 +855,54 @@ END
 **Gọi bởi:** `quantri.js` – POST `/quantri/taotaikhoan`
 
 ```sql
-CREATE PROCEDURE [dbo].[SP_TaoTaiKhoan]
-    @LGNAME VARCHAR(50), 
-    @PASS VARCHAR(50), 
-    @USERNAME VARCHAR(50), 
-    @ROLE VARCHAR(50),
-    @LOAITK VARCHAR(20),   -- 'NhanVien' hoặc 'KhachHang'
-    @MATHAMCHIEU VARCHAR(50) -- MANV hoặc CMND
-WITH EXECUTE AS OWNER
+CREATE OR ALTER PROCEDURE [dbo].[SP_TaoTaiKhoan]
+    @LGNAME      VARCHAR(50),   -- Tham số: Tên login (dùng để đăng nhập SQL Server)
+    @PASS        VARCHAR(50),   -- Tham số: Mật khẩu cho login
+    @USERNAME    VARCHAR(50),   -- Tham số: Tên user trong database (có thể khác login name)
+    @ROLE        VARCHAR(50),   -- Tham số: Role cần gán (NganHang/ChiNhanh/KhachHang)
+    @LOAITK      VARCHAR(20),   -- Tham số: Loại tài khoản (NhanVien/KhachHang)
+    @MATHAMCHIEU VARCHAR(50)    -- Tham số: Mã tham chiếu (MANV hoặc CMND)
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    IF EXISTS(SELECT 1 FROM sys.server_principals WHERE name = @LGNAME)
-    BEGIN
-        RAISERROR('Login name is already in use', 16, 1);
-        RETURN 1;
-    END
-
-    IF EXISTS(SELECT 1 FROM sys.database_principals WHERE name = @USERNAME)
-    BEGIN
-        RAISERROR('User name is already in use in the current database', 16, 1);
-        RETURN 2;
-    END
-
     BEGIN TRY
         DECLARE @SqlStr VARCHAR(MAX);
         DECLARE @PassEscaped VARCHAR(50) = REPLACE(@PASS, '''', '''''');
-        
-        SET @SqlStr = 'CREATE LOGIN ' + QUOTENAME(@LGNAME) + ' WITH PASSWORD = ''' + @PassEscaped + ''', CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF;';
+
+        -- BƯỚC 1: TẠO LOGIN NẾU CHƯA TỒN TẠI (idempotent — chạy lại trên nhiều server không lỗi)
+        IF NOT EXISTS(SELECT 1 FROM sys.server_principals WHERE name = @LGNAME)
+        BEGIN
+            SET @SqlStr = 'CREATE LOGIN ' + QUOTENAME(@LGNAME)
+                        + ' WITH PASSWORD = ''' + @PassEscaped + ''''
+                        + ', CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF;';
+            EXEC(@SqlStr);
+        END
+
+        -- BƯỚC 2: TẠO USER NẾU CHƯA TỒN TẠI VÀ MAP VỚI LOGIN
+        IF NOT EXISTS(SELECT 1 FROM sys.database_principals WHERE name = @USERNAME)
+        BEGIN
+            SET @SqlStr = 'CREATE USER ' + QUOTENAME(@USERNAME)
+                        + ' FOR LOGIN ' + QUOTENAME(@LGNAME) + ';';
+            EXEC(@SqlStr);
+        END
+
+        -- BƯỚC 3: GÁN ROLE (sp_addrolemember tự bỏ qua nếu user đã thuộc role)
+        SET @SqlStr = 'EXEC sp_addrolemember '''
+                    + REPLACE(@ROLE, '''', '''''') + ''', '
+                    + QUOTENAME(@USERNAME) + ';';
         EXEC(@SqlStr);
 
-        SET @SqlStr = 'CREATE USER ' + QUOTENAME(@USERNAME) + ' FOR LOGIN ' + QUOTENAME(@LGNAME) + ';';
-        EXEC(@SqlStr);
-
-        SET @SqlStr = 'EXEC sp_addrolemember ''' + REPLACE(@ROLE, '''', '''''') + ''', ' + QUOTENAME(@USERNAME) + ';';
-        EXEC(@SqlStr);
-
-        -- Ghi vào bảng quản trị để phục vụ tính năng theo dõi + xem mật khẩu
-        INSERT INTO dbo.QuanTriLogin (LoginName, MatKhauHienTai, LoaiTaiKhoan, MaThamChieu, NhomQuyen, NgayTao)
-        VALUES (@LGNAME, @PASS, @LOAITK, @MATHAMCHIEU, @ROLE, GETDATE());
+        -- BƯỚC 4: GHI THÔNG TIN VÀO BẢNG QUẢN TRỊ LOGIN (NẾU CHƯA CÓ)
+        IF NOT EXISTS(SELECT 1 FROM dbo.QuanTriLogin WHERE LoginName = @LGNAME)
+        BEGIN
+            INSERT INTO dbo.QuanTriLogin
+                   (LoginName, MatKhauHienTai, LoaiTaiKhoan, MaThamChieu, NhomQuyen, NgayTao)
+            VALUES (@LGNAME, @PASS, @LOAITK, @MATHAMCHIEU, @ROLE, GETDATE());
+        END
 
         RETURN 0;
+
     END TRY
     BEGIN CATCH
         DECLARE @ErrMsg nvarchar(4000) = ERROR_MESSAGE();
@@ -846,12 +914,14 @@ END
 
 > **Flow:**
 > 1. **Nhận input:** LoginName, Password, UserName, Role (ChiNhanh/KhachHang/NganHang), LoaiTK, MaThamChieu (MANV hoặc CMND).
-> 2. **Kiểm tra trùng:** Login name chưa có trong `sys.server_principals`; DB user chưa có trong `sys.database_principals`.
-> 3. **Tạo login SQL:** `CREATE LOGIN` với password, tắt kiểm tra chính sách mật khẩu.
-> 4. **Tạo DB user:** `CREATE USER ... FOR LOGIN ...` liên kết login với user trong database NGANHANG.
-> 5. **Gán role:** `sp_addrolemember` thêm user vào role tương ứng (ChiNhanh/KhachHang/NganHang).
-> 6. **Ghi log:** INSERT vào `QuanTriLogin` để admin có thể xem/reset mật khẩu và theo dõi trạng thái.
-> 7. **WITH EXECUTE AS OWNER:** SP cần quyền sysadmin để tạo login → chạy với quyền của owner (dbo/sa).
+> 2. **Idempotent theo từng bước (không còn RAISERROR khi trùng):** Mỗi bước tự kiểm tra `IF NOT EXISTS` trước khi thực hiện, nên gọi lại SP với cùng LoginName/UserName không báo lỗi — chỉ bỏ qua phần đã tồn tại và tiếp tục các bước còn lại (gán role, ghi log).
+> 3. **Tạo login SQL (nếu chưa có):** `CREATE LOGIN` với password, tắt kiểm tra chính sách mật khẩu.
+> 4. **Tạo DB user (nếu chưa có):** `CREATE USER ... FOR LOGIN ...` liên kết login với user trong database NGANHANG.
+> 5. **Gán role:** `sp_addrolemember` thêm user vào role tương ứng (ChiNhanh/KhachHang/NganHang) — luôn chạy lại vì lệnh này tự bỏ qua nếu đã là thành viên.
+> 6. **Ghi log (nếu chưa có):** INSERT vào `QuanTriLogin` để admin có thể xem/reset mật khẩu và theo dõi trạng thái.
+> 7. **Không còn `WITH EXECUTE AS OWNER`:** SP hiện đòi hỏi caller phải có server role `securityadmin` trực tiếp để `CREATE LOGIN` (không còn chạy dưới quyền impersonate owner như trước).
+>
+> **Khác biệt so với bản cũ:** Bản trước RAISERROR + RETURN 1/2 khi LoginName/UserName đã tồn tại (và chạy `WITH EXECUTE AS OWNER`). Bản hiện tại được thiết kế **idempotent** để chạy lại an toàn trên nhiều server (NGUON/BENTHANH/TANDINH) mà không lỗi khi phần nào đó đã được tạo trước, đổi lại không còn phân biệt mã lỗi 1/2 cho trường hợp trùng tên.
 >
 > **Lưu ý:** SP tạo login ở **server hiện tại** (BENTHANH hoặc TANDINH). NganHang dùng server TRACUU → tạo login trên TRACUU, không thể đăng nhập vào BENTHANH/TANDINH. Cần tạo login riêng trên từng server nếu cần đăng nhập trực tiếp.
 
@@ -863,17 +933,18 @@ END
 **Gọi bởi:** `quantri.js` – POST `/quantri/reset-password`
 
 ```sql
-CREATE PROCEDURE [dbo].[SP_ResetMatKhau]
-    @LGNAME      VARCHAR(50),
-    @MATKHAU_MOI VARCHAR(50) = '123456'
-WITH EXECUTE AS OWNER
+CREATE OR ALTER PROCEDURE [dbo].[SP_ResetMatKhau]
+    @LoginName   VARCHAR(50),               -- Tham số: tên login cần đổi mật khẩu
+    @MATKHAU_MOI VARCHAR(50) = '123456'     -- Tham số: mật khẩu mới, mặc định '123456'
+WITH EXECUTE AS OWNER  -- Chạy với quyền của owner SP (securityadmin) để được phép ALTER LOGIN
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @LGNAME)
+    -- Kiểm tra login có tồn tại trên server không, tránh đổi mật khẩu cho login ảo
+    IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @LoginName)
     BEGIN
-        RAISERROR(N'Login không tồn tại trên server này.', 16, 1);
+        RAISERROR(N'Tài khoản đăng nhập không tồn tại.', 16, 1);
         RETURN 1;
     END
 
@@ -881,29 +952,32 @@ BEGIN
         DECLARE @SqlStr VARCHAR(MAX);
         DECLARE @PassEscaped VARCHAR(50) = REPLACE(@MATKHAU_MOI, '''', '''''');
 
-        SET @SqlStr = 'ALTER LOGIN ' + QUOTENAME(@LGNAME) + ' WITH PASSWORD = ''' + @PassEscaped + ''';';
+        -- Đổi mật khẩu login ở cấp server
+        SET @SqlStr = 'ALTER LOGIN ' + QUOTENAME(@LoginName) + ' WITH PASSWORD = ''' + @PassEscaped + ''';';
         EXEC(@SqlStr);
 
+        -- Đồng bộ mật khẩu mới + thời điểm đổi vào bảng quản trị
         UPDATE dbo.QuanTriLogin
         SET MatKhauHienTai = @MATKHAU_MOI,
             NgayCapNhatMK  = GETDATE()
-        WHERE LoginName = @LGNAME;
+        WHERE LoginName = @LoginName;
 
-        RETURN 0;
+        RETURN 0;  -- Thành công
     END TRY
     BEGIN CATCH
         DECLARE @ErrMsg nvarchar(4000) = ERROR_MESSAGE();
         RAISERROR(@ErrMsg, 16, 1);
-        RETURN 2;
+        RETURN 2;  -- Lỗi khi đổi mật khẩu
     END CATCH
 END
 ```
 
 > **Flow:**
-> 1. **Nhận input:** `@LGNAME`, `@MATKHAU_MOI` (default = '123456').
-> 2. **Validate:** Login phải tồn tại trong `sys.server_principals` trên server đang chạy SP.
+> 1. **Nhận input:** `@LoginName`, `@MATKHAU_MOI` (default = '123456').
+> 2. **Validate:** Login phải tồn tại trong `sys.server_principals` trên server đang chạy SP — nếu không → RAISERROR "Tài khoản đăng nhập không tồn tại." + RETURN 1.
 > 3. **Đổi mật khẩu:** `ALTER LOGIN ... WITH PASSWORD = ...` (dynamic SQL qua `EXEC`).
 > 4. **Cập nhật log:** `UPDATE QuanTriLogin SET MatKhauHienTai + NgayCapNhatMK` để admin xem mật khẩu hiện tại.
+> 5. **WITH EXECUTE AS OWNER:** vẫn giữ nguyên (khác với `SP_TaoTaiKhoan` đã bỏ) — SP chạy với quyền owner để được phép `ALTER LOGIN` mà không cần cấp `securityadmin` trực tiếp cho caller.
 
 ---
 
@@ -1082,6 +1156,124 @@ END
 
 ---
 
+## SP_SaoKeTaiKhoan (TRACUU) *(TRACUU only — dùng LINK1+LINK2)*
+
+**Chạy trên:** TRACUU  
+**Gọi bởi:** `baocao.js` – GET `/baocao/saoke` (NganHang xem sao kê theo `@SOTK`; KhachHang lặp qua từng TK của mình)  
+**File SQL:** [`sql/deploy_tracuu.sql`](../sql/deploy_tracuu.sql) (mục 4)
+
+```sql
+-- Phiên bản TRACUU của SP_SaoKeTaiKhoan. TRACUU không có TaiKhoan/GD_GOIRUT/GD_CHUYENTIEN local
+-- → đọc số dư qua LINK1 (BENTHANH), fallback LINK2 (TANDINH); GD đọc UNION ALL cả LINK1+LINK2.
+CREATE PROCEDURE [dbo].[SP_SaoKeTaiKhoan]
+    @SOTK NVARCHAR(50),
+    @TUNGAY DATETIME,
+    @DENNGAY DATETIME
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Bước 1: Lấy số dư hiện tại từ LINK1, fallback LINK2
+    DECLARE @SODU_HIENTAI MONEY;
+
+    SELECT @SODU_HIENTAI = SODU
+    FROM [LINK1].NGANHANG.dbo.TaiKhoan
+    WHERE SOTK = @SOTK;
+
+    IF @SODU_HIENTAI IS NULL
+    BEGIN
+        SELECT @SODU_HIENTAI = SODU
+        FROM [LINK2].NGANHANG.dbo.TaiKhoan
+        WHERE SOTK = @SOTK;
+    END
+
+    IF @SODU_HIENTAI IS NULL
+    BEGIN
+        RAISERROR(N'Tài khoản không tồn tại trên hệ thống.', 16, 1);
+        RETURN;
+    END
+
+    -- Bước 2: Tính số dư đầu kỳ (trừ ngược biến động từ @TUNGAY đến nay)
+    DECLARE @BIENDONG_SAU_TUNGAY MONEY = 0;
+
+    SELECT @BIENDONG_SAU_TUNGAY = ISNULL(SUM(
+        CASE
+            WHEN LOAIGD IN ('GT', 'NT') THEN SOTIEN
+            WHEN LOAIGD IN ('RT', 'CT') THEN -SOTIEN
+            ELSE 0
+        END
+    ), 0)
+    FROM (
+        -- GD_GOIRUT từ LINK1
+        SELECT SOTIEN, LOAIGD FROM [LINK1].NGANHANG.dbo.GD_GOIRUT
+        WHERE SOTK = @SOTK AND NGAYGD >= @TUNGAY
+        UNION ALL
+        SELECT SOTIEN, 'CT' FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_CHUYEN = @SOTK AND NGAYGD >= @TUNGAY
+        UNION ALL
+        SELECT SOTIEN, 'NT' FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_NHAN = @SOTK AND NGAYGD >= @TUNGAY
+        -- GD_GOIRUT từ LINK2
+        UNION ALL
+        SELECT SOTIEN, LOAIGD FROM [LINK2].NGANHANG.dbo.GD_GOIRUT
+        WHERE SOTK = @SOTK AND NGAYGD >= @TUNGAY
+        UNION ALL
+        SELECT SOTIEN, 'CT' FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_CHUYEN = @SOTK AND NGAYGD >= @TUNGAY
+        UNION ALL
+        SELECT SOTIEN, 'NT' FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_NHAN = @SOTK AND NGAYGD >= @TUNGAY
+    ) AS LstBienDong;
+
+    DECLARE @SODU_DAUKY MONEY = @SODU_HIENTAI - @BIENDONG_SAU_TUNGAY;
+
+    -- Bước 3: Chi tiết GD trong kỳ + số dư lũy kế
+    ;WITH TransactionsInPeriod AS (
+        -- LINK1
+        SELECT NGAYGD, SOTIEN, LOAIGD FROM [LINK1].NGANHANG.dbo.GD_GOIRUT
+        WHERE SOTK = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        UNION ALL
+        SELECT NGAYGD, SOTIEN, 'CT' FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_CHUYEN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        UNION ALL
+        SELECT NGAYGD, SOTIEN, 'NT' FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_NHAN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        -- LINK2
+        UNION ALL
+        SELECT NGAYGD, SOTIEN, LOAIGD FROM [LINK2].NGANHANG.dbo.GD_GOIRUT
+        WHERE SOTK = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        UNION ALL
+        SELECT NGAYGD, SOTIEN, 'CT' FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_CHUYEN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+        UNION ALL
+        SELECT NGAYGD, SOTIEN, 'NT' FROM [LINK2].NGANHANG.dbo.GD_CHUYENTIEN
+        WHERE SOTK_NHAN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
+    ),
+    RunningBalance AS (
+        SELECT
+            NGAYGD, LOAIGD, SOTIEN,
+            SODU_LUYKE = @SODU_DAUKY + SUM(
+                CASE
+                    WHEN LOAIGD IN ('GT', 'NT') THEN SOTIEN
+                    WHEN LOAIGD IN ('RT', 'CT') THEN -SOTIEN
+                    ELSE 0
+                END
+            ) OVER (ORDER BY NGAYGD ASC ROWS UNBOUNDED PRECEDING)
+        FROM TransactionsInPeriod
+    )
+    SELECT * FROM RunningBalance ORDER BY NGAYGD ASC;
+END
+```
+
+> **Flow:**
+> 1. **Khác biệt với bản BENTHANH/TANDINH:** TRACUU không có `TaiKhoan`/`GD_GOIRUT`/`GD_CHUYENTIEN` local → mọi bước đọc qua Linked Server, không có nhánh đọc local nào.
+> 2. **Bước 1 — Số dư hiện tại:** Tìm trong `[LINK1].NGANHANG.dbo.TaiKhoan` (BENTHANH) trước; nếu không có → fallback `[LINK2]` (TANDINH). Không tìm thấy ở cả 2 → RAISERROR.
+> 3. **Bước 2 — Số dư đầu kỳ ("trừ ngược"):** Giống thuật toán bản ChiNhanh, nhưng `UNION ALL` 6 nguồn đều qua Linked Server (GD_GOIRUT + GD_CHUYENTIEN × LINK1 + LINK2).
+> 4. **Bước 3 — Chi tiết kỳ + số dư lũy kế:** CTE `TransactionsInPeriod` UNION ALL 6 nguồn LINK1+LINK2; CTE `RunningBalance` dùng Window Function giống bản ChiNhanh.
+> 5. **App layer:** NganHang xem sao kê 1 TK cụ thể → `baocao.js` gọi SP này trên server `TRACUU`. KhachHang xem sao kê tổng hợp (không chọn TK) → `baocao.js` lặp gọi SP này cho từng TK của KH rồi merge kết quả (vì KhachHang không có SELECT trực tiếp trên GD_GOIRUT/GD_CHUYENTIEN).
+
+---
+
 ## sp_SaoKeToanBo *(TRACUU only — dùng LINK1+LINK2)*
 
 **Chạy trên:** TRACUU  
@@ -1146,7 +1338,7 @@ END
 -- TRACUU không có NhanVien local (PUB_TRACUU chỉ replicate KhachHang).
 -- SP đọc NhanVien từ BENTHANH (LINK1) + TANDINH (LINK2).
 -- Dùng bởi: nhanvien.js (NganHang GET /), quantri.js (getNhanVienList)
-CREATE PROCEDURE [dbo].[sp_DanhSachNhanVien]
+CREATE OR ALTER PROCEDURE [dbo].[sp_DanhSachNhanVien]
     @MACN nchar(10) = NULL
 AS
 BEGIN
@@ -1187,7 +1379,7 @@ END
 -- Phiên bản chạy trên TRACUU. Bản gốc (SQL1/SQL2) đọc NhanVien local.
 -- TRACUU không có NhanVien → đọc qua LINK1+LINK2. KhachHang + QuanTriLogin vẫn local.
 -- Dùng bởi: quantri.js (GET /login-management/list khi NganHang)
-CREATE PROCEDURE [dbo].[SP_DanhSachTrangThaiLogin]
+CREATE OR ALTER PROCEDURE [dbo].[SP_DanhSachTrangThaiLogin]
     @MACN nchar(10) = NULL
 AS
 BEGIN

@@ -58,8 +58,9 @@ Kiểu Replicate đã chọn cho Stored Procedures: **"Replicate stored procedur
   
   **[Cập nhật 05/07/2026] Lưu ý TaiKhoan:** TaiKhoan replicate full (giống ChiNhanh) → mỗi site đã có đủ TK cả 2 CN. SP trên TRACUU chỉ đọc từ **LINK1** (không UNION ALL LINK1+LINK2 vì sẽ bị duplicate). JOIN KhachHang local dùng **OUTER APPLY TOP 1** để tránh nhân bản kết quả.
   
-  Các SP đặc thù cài thủ công qua `setup_db.js` (không qua Replication):
-  - `sp_SaoKeToanBo` — gộp GD_GOIRUT + GD_CHUYENTIEN từ LINK1+LINK2
+  Các SP đặc thù cài thủ công qua `setup_db.js` / [`sql/deploy_tracuu.sql`](../sql/deploy_tracuu.sql) (không qua Replication):
+  - `sp_SaoKeToanBo` — gộp GD_GOIRUT + GD_CHUYENTIEN từ LINK1+LINK2 (sao kê toàn hệ thống)
+  - `SP_SaoKeTaiKhoan` (bản TRACUU) — gộp GD_GOIRUT + GD_CHUYENTIEN từ LINK1+LINK2 (sao kê theo 1 SOTK)
   - `sp_DanhSachNhanVien` — gộp NhanVien từ LINK1+LINK2
   - `SP_DanhSachTrangThaiLogin` — phiên bản TRACUU đọc NhanVien qua LINK, KhachHang local
 

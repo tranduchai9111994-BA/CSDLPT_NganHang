@@ -229,10 +229,9 @@ Giải pháp: SQL Server cấp cho mỗi Subscriber một dải ID riêng. Ví d
 **Trả lời:** TRACUU (SQL3) chỉ replicate bảng `KhachHang` để phục vụ tra cứu khách hàng toàn hệ thống. Các bảng `NhanVien`, `TaiKhoan`, `GD_GOIRUT`, `GD_CHUYENTIEN` **không có trên SQL3**.
 
 Khi cần dữ liệu đó, SQL3 dùng **SP đặc thù đọc qua Linked Server**:
-- `sp_DanhSachNhanVien` — UNION ALL từ `[LINK1].NGANHANG.dbo.NhanVien` + `[LINK2].NGANHANG.dbo.NhanVien`
-- `sp_LietKeTaiKhoanTheoNgay` — TaiKhoan qua LINK1+LINK2, JOIN KhachHang local
-- `SP_DanhSachTrangThaiLogin` — NhanVien qua LINK, KhachHang+QuanTriLogin local
-- `sp_DanhSachTaiKhoan`, `sp_SaoKeToanBo` — TaiKhoan/GD qua LINK1+LINK2
+- `sp_DanhSachNhanVien`, `SP_DanhSachTrangThaiLogin` — UNION ALL từ `[LINK1]` + `[LINK2]` cho `NhanVien` (NhanVien **không replicate**, mỗi chi nhánh chỉ có NV của mình → phải gộp cả 2 nguồn)
+- `sp_SaoKeToanBo`, `SP_SaoKeTaiKhoan` (bản TRACUU) — UNION ALL từ `[LINK1]` + `[LINK2]` cho `GD_GOIRUT`/`GD_CHUYENTIEN` (GD cũng không replicate, phân mảnh theo chi nhánh)
+- `sp_DanhSachTaiKhoan`, `sp_LietKeTaiKhoanTheoNgay` — **[Cập nhật 05/07/2026]** chỉ đọc qua `[LINK1]` (không UNION ALL LINK1+LINK2): `TaiKhoan` được replicate full giữa BENTHANH↔TANDINH nên LINK1 (trỏ BENTHANH) đã có đủ TK của cả 2 chi nhánh; UNION thêm LINK2 sẽ bị duplicate
 
 Ưu điểm: dữ liệu **realtime** (không bị trễ Replication), TRACUU nhẹ (chỉ lưu KhachHang), phù hợp vai trò "trạm tra cứu".
 

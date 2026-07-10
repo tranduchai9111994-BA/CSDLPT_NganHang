@@ -129,7 +129,8 @@
 | Tra cứu KH trên TRACUU | ✅ | Kết nối SQL3 | |
 | DENY INSERT/UPDATE/DELETE | ✅ | DB Role | |
 | Tạo TK mới cùng nhóm NganHang | ✅ | `SP_TaoTaiKhoan` | Form quản trị |
-| KHÔNG cho tạo TK nhóm khác | ✅ | UI khóa dropdown Role | |
+| Tạo TK nhóm ChiNhanh | ✅ | Dropdown Role (NganHang/ChiNhanh) | Ban GĐ cấp quyền linh hoạt |
+| Đổi nhóm quyền TK đã tạo | ✅ | `sp_droprolemember` + `sp_addrolemember` | Chỉ NganHang, admin được bảo vệ |
 
 ### C2. Nhóm ChiNhanh
 > Đề bài: "Toàn quyền làm việc trên CN đã đăng nhập. Được tạo TK mới cùng nhóm."

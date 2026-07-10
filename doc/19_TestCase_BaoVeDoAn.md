@@ -856,11 +856,29 @@ SELECT * FROM GD_GOIRUT WHERE RTRIM(MANV) = 'NV003';
 | TK-06 | `BT001` (ChiNhanh) | NganHang | **Lỗi:** "Quyền hạn không hợp lệ. Bạn chỉ có thể tạo tài khoản nhóm ChiNhanh hoặc KhachHang" |
 | TK-07 | Dùng login mới (NganHang) vừa tạo để đăng nhập | — | Đăng nhập thành công, có quyền NganHang |
 | TK-08 | Dùng login mới (ChiNhanh) đăng nhập vào BENTHANH | — | Thành công (nếu login mapping đúng MACN=BENTHANH) |
+| TK-09 | Login ChiNhanh đăng nhập vào **sai** chi nhánh (TANDINH) | **Lỗi:** "Tài khoản SQL chưa được phân quyền" | NV chỉ có record ở CN mình |
+
+### TC-17B — Đổi nhóm quyền (Change Role)
+
+> Kiểm thử chức năng "Đổi nhóm" — chỉ NganHang có thể thay đổi nhóm quyền của tài khoản đã tạo. Tài khoản `admin` hệ thống được bảo vệ không cho đổi.
+
+| ID | Thao tác | Kỳ vọng | Ghi chú |
+|----|----------|---------|---------|
+| CR-01 | `admin` đổi TK từ NganHang → ChiNhanh | Thành công trên cả 3 server | `sp_droprolemember` cũ + `sp_addrolemember` mới |
+| CR-02 | Login TK vừa đổi vào đúng CN | Đăng nhập thành công, nhóm = ChiNhanh | Menu ChiNhanh đầy đủ (Gửi/Rút, Chuyển tiền...) |
+| CR-03 | TK ChiNhanh sau đổi → xem Liệt kê KH | Chỉ thấy KH **chi nhánh mình** | Phân mảnh ngang hoạt động đúng |
+| CR-04 | TK ChiNhanh sau đổi → xem Sao kê | Dropdown TK hiển thị, sao kê hoạt động | |
+| CR-05 | `admin` đổi TK từ ChiNhanh → NganHang | Thành công | Chiều ngược lại cũng OK |
+| CR-06 | Thử đổi nhóm quyền tài khoản `admin` | **Lỗi 403:** "Không được phép thay đổi nhóm quyền của tài khoản admin hệ thống" | Backend chặn cứng + UI ẩn nút |
+| CR-07 | ChiNhanh thử gọi API đổi nhóm | **Lỗi 403** | `requireNganHang` middleware chặn |
 
 ### Hệ thống xử lý
 
-- Code: [`routes/quantri.js:65–129`](../APP_NGANHANG/routes/quantri.js)
+- Code tạo TK: [`routes/quantri.js:65–129`](../APP_NGANHANG/routes/quantri.js)
+- Code đổi nhóm: [`routes/quantri.js` — POST `/quantri/login-management/change-role`](../APP_NGANHANG/routes/quantri.js)
 - SP `SP_TaoTaiKhoan` chạy trên **cả 3 server** (BENTHANH, TANDINH, TRACUU) — idempotent (bỏ qua nếu đã tồn tại)
 - Kiểm tra phạm vi quyền tại backend: `quantri.js:79–83`
 - Login được lưu vào `QuanTriLogin` (bảng quản trị riêng) để theo dõi
-- **Tại sao tạo trên cả 3 server?** → KhachHang có thể login từ BENTHANH hoặc TANDINH (TaiKhoan replicate toàn vẹn); NganHang query TRACUU → cần login tồn tại trên TRACUU; ChiNhanh chỉ cần server mình nhưng tạo đồng bộ để an toàn.
+- Đổi nhóm: `sp_droprolemember` role cũ + `sp_addrolemember` role mới + UPDATE `QuanTriLogin` trên cả 3 server
+- Bảo vệ admin: Backend chặn `loginName === 'admin'` (403), UI ẩn nút "Đổi nhóm" cho row admin
+- **Tại sao tạo/đổi trên cả 3 server?** → KhachHang có thể login từ BENTHANH hoặc TANDINH (TaiKhoan replicate toàn vẹn); NganHang query TRACUU → cần login tồn tại trên TRACUU; ChiNhanh chỉ cần server mình nhưng đồng bộ để an toàn.

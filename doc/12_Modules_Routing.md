@@ -54,3 +54,5 @@ Tất cả các chức năng nghiệp vụ được tách ra thành từng file 
   - Route `GET /quantri/login-management/password/:loginName`: trả về mật khẩu plain-text từ bảng `QuanTriLogin`.
   - Route `POST /quantri/login-management/reset-password`: đặt lại mật khẩu về mặc định (`123456`) trên tất cả 3 server đồng thời.
   - Route `POST /quantri/login-management/cleanup-sync-error`: dọn dẹp các tài khoản bị lỗi đồng bộ (có trên bảng phụ trợ nhưng Login thật đã mất).
+- **Đổi Nhóm Quyền (Chỉ dành cho NganHang):**
+  - Route `POST /quantri/login-management/change-role`: đổi nhóm quyền (NganHang ↔ ChiNhanh ↔ KhachHang) trên cả 3 server. Dùng `sp_droprolemember` xóa role cũ + `sp_addrolemember` gán role mới + UPDATE `QuanTriLogin`. Tài khoản `admin` hệ thống được bảo vệ cứng (403). Middleware `requireNganHang` chặn ChiNhanh/KhachHang gọi API.

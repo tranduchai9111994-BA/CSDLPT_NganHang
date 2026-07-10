@@ -512,7 +512,7 @@ SELECT * FROM NhanVien WHERE MANV LIKE 'TD%' ORDER BY MANV DESC;
 
 **Trường hợp lỗi cũ (trước khi fix):** Phục hồi chỉ SET local → BT001 + TD00X đều active → cùng 1 người có 2 mã NV đang làm việc song song = inconsistency.
 
-**Cách fix:** SP `SP_PhuHoiNhanVien` dùng `BEGIN DISTRIBUTED TRAN` để đồng thời phục hồi local + deactivate bản ghi cùng CMND ở chi nhánh kia qua LINK1. Route phục hồi gọi `execSPAdmin` thay vì raw UPDATE.
+**Cách fix:** SP `SP_PhucHoiNhanVien` dùng `BEGIN DISTRIBUTED TRAN` để đồng thời phục hồi local + deactivate bản ghi cùng CMND ở chi nhánh kia qua LINK1. Route phục hồi gọi `execSPAdmin` thay vì raw UPDATE.
 
 **Cách kiểm tra trong DB:**
 ```sql

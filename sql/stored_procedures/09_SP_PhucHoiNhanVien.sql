@@ -11,7 +11,7 @@ GO
 --   Local : SET TrangThaiXoa=0 cho @MANV (phục hồi)
 --   LINK1 : SET TrangThaiXoa=1 cho NV cùng CMND đang active ở chi nhánh kia
 -- ==========================================================================
-CREATE OR ALTER PROCEDURE SP_PhuHoiNhanVien
+CREATE OR ALTER PROCEDURE SP_PhucHoiNhanVien
     @MANV NVARCHAR(10)   -- Mã NV cần phục hồi (VD: BT001)
 AS
 BEGIN
@@ -81,5 +81,5 @@ BEGIN
 END
 GO
 
-PRINT N'SP_PhuHoiNhanVien created.';
+PRINT N'SP_PhucHoiNhanVien created.';
 GO

@@ -773,13 +773,13 @@ END
 
 ---
 
-## SP_PhuHoiNhanVien
+## SP_PhucHoiNhanVien
 
 **Chạy trên:** Chi nhánh đang phục hồi NV (chi nhánh cũ)  
 **Gọi bởi:** `nhanvien.js` – POST `/nhanvien/phuchoi` (qua `execSPAdmin`)
 
 ```sql
-CREATE OR ALTER PROCEDURE SP_PhuHoiNhanVien
+CREATE OR ALTER PROCEDURE SP_PhucHoiNhanVien
     @MANV NVARCHAR(10)   -- Mã NV cần phục hồi (VD: BT001)
 AS
 BEGIN

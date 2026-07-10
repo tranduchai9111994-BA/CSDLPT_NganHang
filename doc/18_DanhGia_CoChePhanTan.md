@@ -200,7 +200,7 @@ execFile('sqlcmd', [..., ...vArgs, '-Q', query, '-b']);
 - `'` vẫn được escape `→ ''` trong giá trị để ngăn SQL string literal breakage qua `$(VarName)` substitution.
 
 > ℹ️ `execSPAdmin` được gọi tại:
-> - [`nhanvien.js`](../APP_NGANHANG/routes/nhanvien.js) — `SP_ChuyenNhanVien` (chuyển NV) và `SP_PhuHoiNhanVien` (phục hồi NV).
+> - [`nhanvien.js`](../APP_NGANHANG/routes/nhanvien.js) — `SP_ChuyenNhanVien` (chuyển NV) và `SP_PhucHoiNhanVien` (phục hồi NV).
 > - [`taikhoan.js`](../APP_NGANHANG/routes/taikhoan.js) — `sp_MoTaiKhoan` cross-branch (mở TK cho KH chi nhánh khác).
 >
 > Rủi ro thực tế thấp (input từ dropdown/form có kiểm soát), nhưng fix là đúng về kiến trúc.

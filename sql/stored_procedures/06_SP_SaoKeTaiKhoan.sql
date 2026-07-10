@@ -17,8 +17,7 @@ BEGIN
 
     -- =========================================================================================
     -- BƯỚC 1: KIỂM TRA TÀI KHOẢN TỒN TẠI VÀ LẤY SỐ DƯ HIỆN TẠI
-    -- TaiKhoan được nhân bản full → tồn tại local ở mọi site.
-    -- Tuy nhiên SP vẫn thử Local trước, fallback LINK1 để chắc chắn.
+    -- TaiKhoan được nhân bản full → luôn tồn tại local ở mọi site, chỉ cần đọc local.
     -- =========================================================================================
     DECLARE @SODU_HIENTAI MONEY;  -- Biến lưu số dư hiện tại của tài khoản
 
@@ -27,15 +26,8 @@ BEGIN
     FROM TaiKhoan                  -- Đọc từ bảng TaiKhoan local
     WHERE SOTK = @SOTK;           -- Điều kiện: khớp số tài khoản
 
-    -- Bước 1b: Nếu không tìm thấy ở Local → tìm ở Linked Server (chi nhánh đối tác)
-    IF @SODU_HIENTAI IS NULL  -- Kiểm tra biến vẫn NULL = chưa tìm thấy
-    BEGIN
-        SELECT @SODU_HIENTAI = SODU                      -- Gán số dư từ server liên kết
-        FROM [LINK1].NGANHANG.dbo.TaiKhoan               -- Đọc qua Linked Server LINK1
-        WHERE SOTK = @SOTK;                               -- Điều kiện: khớp số tài khoản
-    END
-
-    -- Bước 1c: Tìm cả 2 nơi không thấy → tài khoản không tồn tại → báo lỗi
+    -- Bước 1b: Không tìm thấy → tài khoản không tồn tại → báo lỗi
+    -- (TaiKhoan được nhân bản full nên chỉ cần đọc Local, không cần LINK1)
     IF @SODU_HIENTAI IS NULL
     BEGIN
         RAISERROR(N'Tài khoản không tồn tại trên hệ thống.', 16, 1);  -- Ném lỗi severity 16

@@ -517,14 +517,10 @@ BEGIN
     SET NOCOUNT ON;
 
     -- BƯỚC 1: KIỂM TRA TÀI KHOẢN VÀ LẤY SỐ DƯ HIỆN TẠI
+    -- TaiKhoan được nhân bản full → chỉ cần đọc local, không cần LINK1
     DECLARE @SODU_HIENTAI MONEY;
     
     SELECT @SODU_HIENTAI = SODU FROM TaiKhoan WHERE SOTK = @SOTK;
-    
-    IF @SODU_HIENTAI IS NULL
-    BEGIN
-        SELECT @SODU_HIENTAI = SODU FROM [LINK1].NGANHANG.dbo.TaiKhoan WHERE SOTK = @SOTK;
-    END
 
     IF @SODU_HIENTAI IS NULL
     BEGIN

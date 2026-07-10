@@ -399,9 +399,8 @@ Xem sao kê giao dịch trong khoảng ngày, kèm số dư lũy kế. Đây là
 
 **Bước 2 — SP tìm SODU hiện tại (BƯỚC 1 trong SP)**
 - SP: [`sql/stored_procedures/06_SP_SaoKeTaiKhoan.sql:18–30`](../sql/stored_procedures/06_SP_SaoKeTaiKhoan.sql)
-- Tìm local trước: `SELECT SODU FROM TaiKhoan WHERE SOTK = @SOTK`
-- Không thấy → tìm qua LINK1: `SELECT SODU FROM [LINK1]...TaiKhoan`
-- Vẫn không thấy → RAISERROR
+- Đọc local: `SELECT SODU FROM TaiKhoan WHERE SOTK = @SOTK` (TaiKhoan nhân bản full → luôn có ở local, không cần LINK1)
+- Không thấy → RAISERROR
 
 **Bước 3 — Tính SODU đầu kỳ bằng kỹ thuật "trừ ngược" (BƯỚC 2 trong SP)**
 - SP: [`06_SP_SaoKeTaiKhoan.sql:39–66`](../sql/stored_procedures/06_SP_SaoKeTaiKhoan.sql)

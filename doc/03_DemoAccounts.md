@@ -50,24 +50,24 @@ Xác thực qua SQL Server Authentication — login name là tên SQL Login.
 
 ## Tài Khoản Khách Hàng Demo
 
-Khách hàng đăng nhập bằng **số CMND** làm SQL Login, mật khẩu mặc định `1`.  
+Khách hàng đăng nhập bằng **số CMND** làm SQL Login, mật khẩu mặc định `123456`.  
 Script tạo sẵn: [`sql/setup/11_TaoTaiKhoanKhachHang_Demo.sql`](../sql/setup/11_TaoTaiKhoanKhachHang_Demo.sql)
 
 ### Chi nhánh Bến Thành (SQL1)
 
 | SQL Login (CMND) | Mật khẩu | Họ tên |
 |-----------------|----------|--------|
-| `1111111111` | `1` | Nguyễn Văn An |
-| `0011223344` | `1` | Trần Đức Hải |
+| `1111111111` | `123456` | Nguyễn Văn An |
+| `0011223344` | `123456` | Trần Đức Hải |
 
 ### Chi nhánh Tân Định (SQL2)
 
 | SQL Login (CMND) | Mật khẩu | Họ tên |
 |-----------------|----------|--------|
-| `2222222222` | `1` | Nguyễn Thị Bình |
-| `0099887766` | `1` | Lê Văn Cường |
-| `3333333333` | `1` | Phạm Thị Dung |
-| `4444444444` | `1` | Hoàng Văn Em |
+| `2222222222` | `123456` | Nguyễn Thị Bình |
+| `0099887766` | `123456` | Lê Văn Cường |
+| `3333333333` | `123456` | Phạm Thị Dung |
+| `4444444444` | `123456` | Hoàng Văn Em |
 
 **Quyền của KhachHang:**
 - EXECUTE `sp_TaiKhoanKhachHang` — xem danh sách tài khoản của mình

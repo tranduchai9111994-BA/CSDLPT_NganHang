@@ -25,7 +25,7 @@
 | Demo nhóm NganHang | `admin` | `1` | TRACUU | Ban Giám Đốc |
 | Demo nhóm KhachHang | (CMND KH mẫu) | (PIN tự đặt) | BENTHANH/TANDINH | Khách hàng |
 
-> **Lưu ý:** LoginName = MANV (ví dụ `BT001` cho nhân viên Bến Thành #1, `TD002` cho Tân Định #2). Toàn bộ tài khoản demo dùng mật khẩu `1` — xem danh sách đầy đủ tại [`03_DemoAccounts.md`](03_DemoAccounts.md).
+> **Lưu ý:** LoginName = MANV (ví dụ `BT001` cho nhân viên Bến Thành #1, `TD002` cho Tân Định #2). NhanVien/Admin dùng mật khẩu `1`, KhachHang dùng mật khẩu `123456` — xem danh sách đầy đủ tại [`03_DemoAccounts.md`](03_DemoAccounts.md).
 
 > ⚠️ **CẬP NHẬT:** Trước khi demo, mở SSMS kiểm tra SOTK và CMND mẫu thực tế trong DB.  
 > Ghi lại vào bảng này: SOTK_BT = _______, SOTK_TD = _______, CMND_KH = _______

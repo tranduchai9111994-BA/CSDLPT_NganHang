@@ -45,8 +45,16 @@
                 </div>
                 <div style="margin-bottom: 20px;">
                     <label style="font-weight: bold; display: block; margin-bottom: 5px;">Nhóm Quyền (Role)</label>
-                    <input type="text" style="width: 100%; padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px; background-color: #e9ecef; color: #495057;" name="Role" value="ChiNhanh" readonly>
-                    <small style="color: #dc3545; display: block; margin-top: 5px; font-size: 13px;">* Nhân viên được gán quyền ChiNhanh (quản lý chi nhánh của mình).</small>
+                    <% if (user.NHOM === 'NganHang') { %>
+                        <select name="Role" style="width: 100%; padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px; background-color: #fff;">
+                            <option value="ChiNhanh" selected>ChiNhanh (Quản lý chi nhánh)</option>
+                            <option value="NganHang">NganHang (Ban Giám Đốc)</option>
+                        </select>
+                        <small style="color: #0d6efd; display: block; margin-top: 5px; font-size: 13px;">* Ban Giám Đốc có thể cấp quyền NganHang hoặc ChiNhanh cho nhân viên.</small>
+                    <% } else { %>
+                        <input type="text" style="width: 100%; padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px; background-color: #e9ecef; color: #495057;" name="Role" value="ChiNhanh" readonly>
+                        <small style="color: #dc3545; display: block; margin-top: 5px; font-size: 13px;">* Nhân viên được gán quyền ChiNhanh (quản lý chi nhánh của mình).</small>
+                    <% } %>
                 </div>
                 <button type="submit" style="width: 100%; padding: 10px; background-color: #0d6efd; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 15px; margin-bottom: 10px;">Tạo Tài Khoản Nhân Viên</button>
                 <a href="/" style="display: block; text-align: center; width: 100%; padding: 10px; background-color: #6c757d; color: white; border: none; border-radius: 4px; font-weight: bold; text-decoration: none; font-size: 15px;">Hủy</a>

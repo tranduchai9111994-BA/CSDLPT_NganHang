@@ -386,10 +386,10 @@ Xem sao kê giao dịch trong khoảng ngày, kèm số dư lũy kế. Đây là
 |----|----------------|-------|-----------------|
 | 07a | Login `BT001`/`1` → chi nhánh BENTHANH → Sao kê GD | SOTK=`BT0000001`, từ đầu tháng | Danh sách GD, SODU_LUYKE đúng sau mỗi GD |
 | 07b | Login `admin`/`1` → chi nhánh TRACUU → Sao kê GD | SOTK=`TD0000001` (TK thuộc SQL2, TRACUU query qua LINK2) | SP đọc qua Linked Server, vẫn trả về kết quả |
-| 07c | Login `admin`/`1` → chi nhánh TRACUU → Sao kê GD | SOTK=`XX9999999` (không tồn tại cả 2 nơi) | Lỗi: "Tài khoản không tồn tại trên hệ thống" |
+| 07c | Login `admin`/`1` → chi nhánh TRACUU → Sao kê GD | SOTK=`XX9999999` (không tồn tại) | Lỗi: "Tài khoản không tồn tại trên hệ thống" |
 | 07d | Login `BT001`/`1` → chi nhánh BENTHANH → Sao kê GD | SOTK=`BT0000001`, khoảng ngày không có GD | Trả về rỗng, SODU_DAUKY = SODU_CUOIKY |
 
-> **Lưu ý TC-07b:** `TaiKhoan` trên SQL1 chỉ chứa dữ liệu BENTHANH (phân mảnh ngang) — dropdown của BT001 không thấy TD accounts. Phải test 07b từ `admin`/TRACUU vì `SP_SaoKeTaiKhoan` phiên bản TRACUU đọc TaiKhoan qua `LINK1`+`LINK2`, thấy toàn bộ tài khoản cả 2 chi nhánh.
+> **Lưu ý TC-07b:** `TaiKhoan` được nhân bản full → SQL1/SQL2 đều có đủ TK cả 2 chi nhánh. Tuy nhiên dropdown của BT001 (role ChiNhanh) chỉ hiển thị TK theo MACN của NV → không thấy TD accounts. Phải test 07b từ `admin`/TRACUU vì `SP_SaoKeTaiKhoan` phiên bản TRACUU đọc GD qua `LINK1`+`LINK2`, gom giao dịch từ cả 2 chi nhánh.
 
 ### Hệ thống xử lý chi tiết
 

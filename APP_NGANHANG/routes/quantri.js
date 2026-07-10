@@ -262,6 +262,9 @@ router.post('/login-management/change-role', requireNganHang, async (req, res) =
   if (!loginName || !['NganHang', 'ChiNhanh', 'KhachHang'].includes(newRole)) {
     return res.status(400).json({ error: 'Thiếu loginName hoặc nhóm quyền không hợp lệ.' });
   }
+  if (loginName === 'admin') {
+    return res.status(403).json({ error: 'Không được phép thay đổi nhóm quyền của tài khoản admin hệ thống.' });
+  }
 
   try {
     const serverKeys = ['BENTHANH', 'TANDINH', 'TRACUU'];

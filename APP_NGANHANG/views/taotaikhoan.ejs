@@ -202,7 +202,7 @@ function renderLoginRows(data) {
       if (row.DaCapTaiKhoan === 1) {
           if (isNganHang) {
               actionHtml = `<button class="btn btn-sm" style="background:#f59e0b; color:#fff; border:none; margin-right:4px;" onclick="resetPassword('${row.LoginName}', '${row.HoTen}')"><i class="fas fa-key"></i> Reset MK</button>`
-                + `<button class="btn btn-sm" style="background:#7c3aed; color:#fff; border:none;" onclick="changeRole('${row.LoginName}', '${row.HoTen}', '${row.NhomQuyen}')"><i class="fas fa-exchange-alt"></i> Đổi nhóm</button>`;
+                + (row.LoginName !== 'admin' ? `<button class="btn btn-sm" style="background:#7c3aed; color:#fff; border:none;" onclick="changeRole('${row.LoginName}', '${row.HoTen}', '${row.NhomQuyen}')"><i class="fas fa-exchange-alt"></i> Đổi nhóm</button>` : '');
               passHtml = `
                   <td>
                       <span id="pass_${row.LoginName}">******</span>

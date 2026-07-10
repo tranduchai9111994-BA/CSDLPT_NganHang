@@ -45,7 +45,7 @@ Tính năng tạo và cấp phát Login (Form "Tạo Tài Khoản") đòi hỏi 
 - **`SP_TaoTaiKhoan`**: `GRANT` cho `NganHang`, `ChiNhanh` (Chỉ NV mới được tạo TK). `DENY` cho `KhachHang`.
 - **`SP_DanhSachTrangThaiLogin`** & **`SP_XoaLoiDongBo`**: `GRANT` cho `NganHang`, `ChiNhanh`. `DENY` cho `KhachHang`.
 - **`SP_ResetMatKhau`**: CHỈ `GRANT` cho `NganHang` (Ban Giám Đốc). `DENY` cho `ChiNhanh` và `KhachHang` để tránh nhân viên lạm quyền đổi pass của người khác.
-- **Đổi nhóm quyền (`change-role`)**: Route `POST /quantri/login-management/change-role` được bảo vệ bởi middleware `requireNganHang`. Backend chặn cứng thay đổi tài khoản `admin` (HTTP 403). UI ẩn nút "Đổi nhóm" cho dòng admin. Thao tác thực hiện `sp_droprolemember` + `sp_addrolemember` trên cả 3 server.
+- **Đổi nhóm quyền (`change-role`)**: Route `POST /quantri/login-management/change-role` được bảo vệ bởi middleware `requireNganHang`. Backend chặn cứng thay đổi tài khoản `admin` (HTTP 403). UI: NganHang thấy nút "Đổi nhóm" mở modal popup chọn nhóm mới; ChiNhanh thấy "Không có quyền" ở cột Thao tác; dòng admin ẩn nút hoàn toàn. Thao tác thực hiện `sp_droprolemember` + `sp_addrolemember` trên cả 3 server.
 
 ## 4. Mức Giao Diện (UI - View)
 Trong các file `.ejs`, sử dụng thẻ `if` để ẩn/hiện menu dựa trên nhóm quyền, nhằm mang lại trải nghiệm người dùng tốt (không thấy các chức năng không được phép sử dụng):

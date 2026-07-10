@@ -48,7 +48,7 @@ Tất cả các chức năng nghiệp vụ được tách ra thành từng file 
 
 ## 7. `quantri.js` (Tạo Tài Khoản / Phân Quyền)
 - **Chức năng Tạo Tài Khoản (Login):** Giao diện đã được nâng cấp thành thiết kế 2 cột song song (Grid Layout / Flexbox) chuyên nghiệp, hiển thị trực quan cả 2 bảng.
-- Hỗ trợ công cụ tìm kiếm "search-as-you-type" để chọn trực tiếp Nhân viên hoặc Khách hàng khi có quá nhiều dữ liệu, thay cho Select dropdown thông thường. Trường "Nhóm quyền" (Role) được khóa cứng để hệ thống tự động gán chống sai sót phân quyền.
+- Hỗ trợ công cụ tìm kiếm "search-as-you-type" để chọn trực tiếp Nhân viên hoặc Khách hàng khi có quá nhiều dữ liệu, thay cho Select dropdown thông thường. Trường "Nhóm quyền" (Role): NganHang thấy dropdown chọn (NganHang/ChiNhanh), ChiNhanh bị khóa cứng (chỉ tạo cùng nhóm hoặc KhachHang).
 - **Bảng Theo Dõi Trạng Thái Login:** Dưới form tạo tài khoản là bảng danh sách (Route `GET /quantri/login-management/list`). Bảng hiển thị thông tin những ai đã được cấp tài khoản, ai chưa. Có bộ lọc theo Loại, Trạng thái và tìm kiếm text.
 - **Xem / Đặt Lại Mật Khẩu (Chỉ dành cho NganHang):**
   - Route `GET /quantri/login-management/password/:loginName`: trả về mật khẩu plain-text từ bảng `QuanTriLogin`.

@@ -139,7 +139,8 @@
 |---|---|---|---|
 | Toàn quyền CRUD trên CN mình | ✅ | DB Role + Middleware | |
 | Không xem CN khác | ✅ | Khóa dropdown CN | |
-| Tạo TK mới cùng nhóm ChiNhanh | ✅ | `SP_TaoTaiKhoan` | |
+| Tạo TK mới cùng nhóm ChiNhanh hoặc KhachHang | ✅ | `SP_TaoTaiKhoan` | Backend chặn nếu chọn NganHang |
+| KHÔNG được đổi nhóm quyền | ✅ | `requireNganHang` middleware | UI hiện "Không có quyền", API trả 403 |
 
 ### C3. Nhóm KhachHang
 > Đề bài: "Chỉ xem sao kê của chính TK mình. Không được tạo TK mới."

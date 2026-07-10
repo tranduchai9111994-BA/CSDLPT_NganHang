@@ -18,13 +18,13 @@ router.get('/saoke', async (req, res) => {
     if (user.NHOM === 'KhachHang') {
       // SP thay raw SELECT: KhachHang không có GRANT SELECT trên TaiKhoan
       const myTK = await querySP(req, server, 'sp_TaiKhoanKhachHang', { CMND: user.MANV });
-      tkRows = myTK.map(tk => ({ SOTK: tk.SOTK }));
+      tkRows = myTK.map(tk => ({ SOTK: tk.SOTK, MACN: tk.MACN }));
     } else if (server === 'TRACUU') {
       tkRows = await querySQL(req, server, `
-        SELECT DISTINCT RTRIM(SOTK) AS SOTK FROM [LINK1].NGANHANG.dbo.TaiKhoan
-        ORDER BY SOTK`);
+        SELECT DISTINCT RTRIM(SOTK) AS SOTK, RTRIM(MACN) AS MACN FROM [LINK1].NGANHANG.dbo.TaiKhoan
+        ORDER BY MACN, SOTK`);
     } else {
-      tkRows = await querySQL(req, server, `SELECT RTRIM(SOTK) AS SOTK FROM TaiKhoan ORDER BY SOTK`);
+      tkRows = await querySQL(req, server, `SELECT RTRIM(SOTK) AS SOTK, RTRIM(MACN) AS MACN FROM TaiKhoan ORDER BY MACN, SOTK`);
     }
     res.render('baocao/saoke', { tkRows, rows: null, sodu_dau: 0, sodu_cuoi: 0, error: null, query: {} });
   } catch (err) {
@@ -46,7 +46,7 @@ router.post('/saoke', async (req, res) => {
   if (user.NHOM === 'KhachHang') {
     try {
       myTKList = await querySP(req, server, 'sp_TaiKhoanKhachHang', { CMND: user.MANV });
-      myTKRows = myTKList.map(tk => ({ SOTK: tk.SOTK }));
+      myTKRows = myTKList.map(tk => ({ SOTK: tk.SOTK, MACN: tk.MACN }));
     } catch (e) {
       return res.render('baocao/saoke', {
         tkRows: [], rows: null, sodu_dau: 0, sodu_cuoi: 0,
@@ -104,8 +104,8 @@ router.post('/saoke', async (req, res) => {
       const tkRows = user.NHOM === 'KhachHang'
         ? myTKRows
         : server === 'TRACUU'
-          ? await querySQL(req, server, `SELECT DISTINCT RTRIM(SOTK) AS SOTK FROM [LINK1].NGANHANG.dbo.TaiKhoan ORDER BY SOTK`)
-          : await querySQL(req, server, `SELECT RTRIM(SOTK) AS SOTK FROM TaiKhoan ORDER BY SOTK`);
+          ? await querySQL(req, server, `SELECT DISTINCT RTRIM(SOTK) AS SOTK, RTRIM(MACN) AS MACN FROM [LINK1].NGANHANG.dbo.TaiKhoan ORDER BY MACN, SOTK`)
+          : await querySQL(req, server, `SELECT RTRIM(SOTK) AS SOTK, RTRIM(MACN) AS MACN FROM TaiKhoan ORDER BY MACN, SOTK`);
 
       return res.render('baocao/saoke', {
         tkRows, rows, sodu_dau, sodu_cuoi, error: null,

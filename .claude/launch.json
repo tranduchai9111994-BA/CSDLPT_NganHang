@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "app",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["APP_NGANHANG/app.js"],
+      "port": 3001
+    }
+  ]
+}

@@ -256,4 +256,52 @@ router.post('/login-management/reset-password', requireNganHang, async (req, res
   }
 });
 
+// POST /quantri/login-management/change-role
+router.post('/login-management/change-role', requireNganHang, async (req, res) => {
+  const { loginName, newRole } = req.body;
+  if (!loginName || !['NganHang', 'ChiNhanh', 'KhachHang'].includes(newRole)) {
+    return res.status(400).json({ error: 'Thiếu loginName hoặc nhóm quyền không hợp lệ.' });
+  }
+
+  try {
+    const serverKeys = ['BENTHANH', 'TANDINH', 'TRACUU'];
+    const safeNewRole = newRole.replace(/'/g, "''");
+
+    for (const srvKey of serverKeys) {
+      try {
+        const pool = await getAdminPool(srvKey);
+
+        const qtlRes = await pool.request()
+          .input('LN', sql.VarChar, loginName)
+          .query(`SELECT MaThamChieu, NhomQuyen FROM dbo.QuanTriLogin WHERE LoginName = @LN`);
+        if (qtlRes.recordset.length === 0) continue;
+
+        const { MaThamChieu, NhomQuyen: oldRole } = qtlRes.recordset[0];
+        if (oldRole.trim() === newRole) continue;
+
+        const safeUser = MaThamChieu.replace(/]/g, ']]');
+        const safeOldRole = oldRole.trim().replace(/'/g, "''");
+
+        // Xóa khỏi role cũ, thêm vào role mới
+        await pool.request().query(`EXEC sp_droprolemember '${safeOldRole}', [${safeUser}]`);
+        await pool.request().query(`EXEC sp_addrolemember '${safeNewRole}', [${safeUser}]`);
+
+        // Cập nhật QuanTriLogin
+        await pool.request()
+          .input('LN2', sql.VarChar, loginName)
+          .input('NR', sql.VarChar, newRole)
+          .query(`UPDATE dbo.QuanTriLogin SET NhomQuyen = @NR, NgayCapNhatMK = GETDATE() WHERE LoginName = @LN2`);
+
+        console.log(`[ChangeRole] ${srvKey}: ${loginName} ${oldRole} → ${newRole}`);
+      } catch (e) {
+        console.error(`[ChangeRole] ${srvKey}: ${e.message}`);
+      }
+    }
+
+    res.json({ success: true, message: `Đã đổi nhóm quyền thành ${newRole} trên tất cả server.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

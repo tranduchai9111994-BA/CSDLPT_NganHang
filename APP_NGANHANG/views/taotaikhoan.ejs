@@ -201,7 +201,8 @@ function renderLoginRows(data) {
 
       if (row.DaCapTaiKhoan === 1) {
           if (isNganHang) {
-              actionHtml = `<button class="btn btn-sm" style="background:#f59e0b; color:#fff; border:none;" onclick="resetPassword('${row.LoginName}', '${row.HoTen}')"><i class="fas fa-key"></i> Reset MK</button>`;
+              actionHtml = `<button class="btn btn-sm" style="background:#f59e0b; color:#fff; border:none; margin-right:4px;" onclick="resetPassword('${row.LoginName}', '${row.HoTen}')"><i class="fas fa-key"></i> Reset MK</button>`
+                + `<button class="btn btn-sm" style="background:#7c3aed; color:#fff; border:none;" onclick="changeRole('${row.LoginName}', '${row.HoTen}', '${row.NhomQuyen}')"><i class="fas fa-exchange-alt"></i> Đổi nhóm</button>`;
               passHtml = `
                   <td>
                       <span id="pass_${row.LoginName}">******</span>
@@ -323,6 +324,27 @@ function resetPassword(loginName, hoTen) {
         })
         .catch(err => alert("Lỗi khi gọi API: " + err.message));
     }
+}
+
+function changeRole(loginName, hoTen, currentRole) {
+    const roles = ['NganHang', 'ChiNhanh', 'KhachHang'].filter(r => r !== currentRole.trim());
+    const newRole = prompt(`Đổi nhóm quyền cho ${hoTen} (${loginName}).\nHiện tại: ${currentRole}\n\nChọn nhóm mới:\n1. ${roles[0]}\n2. ${roles[1]}\n\nNhập 1 hoặc 2:`);
+    if (!newRole) return;
+    const selected = newRole === '1' ? roles[0] : newRole === '2' ? roles[1] : null;
+    if (!selected) { alert('Lựa chọn không hợp lệ.'); return; }
+    if (!confirm(`Xác nhận đổi nhóm quyền:\n${hoTen} (${loginName})\n${currentRole} → ${selected}`)) return;
+
+    fetch('/quantri/login-management/change-role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ loginName, newRole: selected })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) { alert(data.message); loadLoginStatusTable(); }
+        else alert('Lỗi: ' + data.error);
+    })
+    .catch(err => alert('Lỗi kết nối: ' + err.message));
 }
 
 function cleanupAndRecreate(loginName, maThamChieu, loaiTK) {

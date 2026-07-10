@@ -25,22 +25,8 @@ function fmtDate(val) {
       <label>Số tài khoản <span style="color:#999;font-size:11px;font-weight:normal;">(để trống = xem tất cả)</span></label>
       <select name="SOTK">
         <option value="">-- Tất cả tài khoản --</option>
-        <%
-          const cnNames = { BENTHANH: 'Bến Thành', TANDINH: 'Tân Định' };
-          const groups = {};
-          tkRows.forEach(tk => {
-            const key = tk.MACN || 'Khác';
-            if (!groups[key]) groups[key] = [];
-            groups[key].push(tk);
-          });
-          Object.keys(groups).forEach(macn => {
-            const label = cnNames[macn] || macn;
-        %>
-          <optgroup label="Chi nhánh <%= label %>">
-            <% groups[macn].forEach(tk => { %>
-              <option value="<%= tk.SOTK %>" <%= (query.SOTK===tk.SOTK)?'selected':'' %>><%= tk.SOTK %></option>
-            <% }) %>
-          </optgroup>
+        <% tkRows.forEach(tk => { %>
+          <option value="<%= tk.SOTK %>" <%= (query.SOTK===tk.SOTK)?'selected':'' %>><%= tk.SOTK %></option>
         <% }) %>
       </select>
     </div>

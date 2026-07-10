@@ -163,7 +163,17 @@ Ví dụ: `[LINK1].NGANHANG.dbo.TaiKhoan` — truy vấn bảng TaiKhoan trong d
 
 `Số dư đầu kỳ = Số dư hiện tại - SUM(biến động từ @TUNGAY đến nay)`
 
-Sau đó dùng Window Functions (`SUM() OVER ORDER BY NGAYGD`) để tính số dư lũy kế từng dòng. Cách này chỉ cần kéo dữ liệu trong khoảng thời gian yêu cầu qua Linked Server, nhanh hơn rất nhiều.
+Sau đó dùng Window Functions (`SUM() OVER ORDER BY NGAYGD ROWS UNBOUNDED PRECEDING`) để tính số dư lũy kế từng dòng. Cách này chỉ cần kéo dữ liệu trong khoảng thời gian yêu cầu qua Linked Server, nhanh hơn rất nhiều.
+
+**Ví dụ cụ thể:** SODU_HIENTAI = 10tr, BIENDONG từ 01/07 đến nay = 2tr → SODU_DAUKY = 8tr
+
+| NGAYGD | LOAIGD | SOTIEN | SODU_LUYKE | Giải thích |
+|---|---|---|---|---|
+| 01/07 | GT (gửi) | 5,000,000 | 13,000,000 | 8tr + 5tr |
+| 05/07 | RT (rút) | 2,000,000 | 11,000,000 | 13tr - 2tr |
+| 10/07 | CT (chuyển đi) | 1,000,000 | 10,000,000 | 11tr - 1tr |
+| 15/07 | NT (nhận CK) | 3,000,000 | 13,000,000 | 10tr + 3tr |
+| 20/07 | GT (gửi) | 2,000,000 | 15,000,000 | 13tr + 2tr |
 
 ### 4.3. sp_Login_App hoạt động thế nào?
 

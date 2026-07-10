@@ -591,10 +591,7 @@ END
 
 > **Flow:**
 > 1. **Nhận input:** `@SOTK`, `@TUNGAY`, `@DENNGAY`.
-> 2. **Bước 1 — Lấy số dư hiện tại:**
->    - Tìm trong `TaiKhoan` local trước.
->    - Nếu không có → tìm qua `[LINK1]` (TK của chi nhánh đối tác).
->    - Không tìm thấy → RAISERROR.
+> 2. **Bước 1 — Lấy số dư hiện tại:** Đọc local (TaiKhoan nhân bản full → luôn có, không cần LINK1). Không thấy → RAISERROR.
 > 3. **Bước 2 — Tính số dư đầu kỳ (thuật toán "trừ ngược"):**
 >    - Lấy tất cả biến động từ `@TUNGAY` đến nay (local + LINK1): GT/NT cộng (+), RT/CT trừ (-).
 >    - `SODU_DAUKY = SODU_HIENTAI − BIENDONG_SAU_TUNGAY`
@@ -604,7 +601,23 @@ END
 >    - CTE `RunningBalance`: Window Function `SUM(...) OVER (ORDER BY NGAYGD ROWS UNBOUNDED PRECEDING)` tính số dư lũy kế sau mỗi GD.
 > 5. **Trả về:** Danh sách GD kèm SODU_LUYKE sau từng giao dịch, sắp xếp theo ngày tăng dần.
 >
-> **Lý do đọc cả LINK1:** GD của TK này có thể phát sinh ở chi nhánh đối tác (ví dụ TK ở BENTHANH nhưng nộp tiền tại TANDINH → GD_GOIRUT ghi tại TANDINH).
+> **Lý do đọc GD cả LINK1:** GD của TK này có thể phát sinh ở chi nhánh đối tác (ví dụ TK ở BENTHANH nhưng nộp tiền tại TANDINH → GD_GOIRUT ghi tại TANDINH).
+
+> **Ví dụ minh họa 3 bước** (dùng cho phản biện):
+> ```
+> EXEC SP_SaoKeTaiKhoan @SOTK='000000001', @TUNGAY='2026-07-01', @DENNGAY='2026-07-31'
+>
+> Bước 1: SODU_HIENTAI = 10,000,000 (đọc local)
+> Bước 2: BIENDONG_SAU_TUNGAY = 2,000,000 → SODU_DAUKY = 10tr - 2tr = 8,000,000
+> Bước 3: Tính SODU_LUYKE:
+>   NGAYGD     | LOAIGD | SOTIEN    | SODU_LUYKE
+>   -----------|--------|-----------|------------
+>   2026-07-01 | GT     | 5,000,000 | 13,000,000   (8tr + 5tr)
+>   2026-07-05 | RT     | 2,000,000 | 11,000,000   (13tr - 2tr)
+>   2026-07-10 | CT     | 1,000,000 | 10,000,000   (11tr - 1tr)
+>   2026-07-15 | NT     | 3,000,000 | 13,000,000   (10tr + 3tr)
+>   2026-07-20 | GT     | 2,000,000 | 15,000,000   (13tr + 2tr)
+> ```
 
 ---
 

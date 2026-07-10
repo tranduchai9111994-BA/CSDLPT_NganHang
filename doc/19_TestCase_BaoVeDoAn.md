@@ -424,6 +424,20 @@ EXEC SP_SaoKeTaiKhoan @SOTK = 'BT0000001', @TUNGAY = '2026-01-01', @DENNGAY = '2
 SELECT SOTK, SODU FROM TaiKhoan WHERE SOTK = 'BT0000001';
 ```
 
+**Ví dụ minh họa 3 bước** (giải thích trực tiếp cho thầy):
+```
+Bước 1: SODU_HIENTAI = 10,000,000 (đọc local, TaiKhoan nhân bản full)
+Bước 2: BIENDONG_SAU_TUNGAY = 2,000,000 → SODU_DAUKY = 10tr - 2tr = 8,000,000
+Bước 3: Tính SODU_LUYKE bằng Window Function:
+  NGAYGD     | LOAIGD | SOTIEN    | SODU_LUYKE
+  -----------|--------|-----------|------------
+  2026-07-01 | GT     | 5,000,000 | 13,000,000   (8tr + 5tr)
+  2026-07-05 | RT     | 2,000,000 | 11,000,000   (13tr - 2tr)
+  2026-07-10 | CT     | 1,000,000 | 10,000,000   (11tr - 1tr)
+  2026-07-15 | NT     | 3,000,000 | 13,000,000   (10tr + 3tr)
+  2026-07-20 | GT     | 2,000,000 | 15,000,000   (13tr + 2tr)
+```
+
 **Logic vấn đáp:**
 - **Tại sao không tính từ đầu?** → TK có thể có hàng nghìn GD từ ngày mở → tốn bộ nhớ + network. Tính ngược chỉ cần quét từ `@TUNGAY` → nhanh hơn nhiều, đặc biệt khi phải kéo qua Linked Server.
 - **Window Function `ROWS UNBOUNDED PRECEDING`?** → Tính tổng cộng dồn từ dòng đầu tiên đến dòng hiện tại, sort theo `NGAYGD`. Đây là SQL Server tự tính trong 1 lần scan, không cần vòng lặp.

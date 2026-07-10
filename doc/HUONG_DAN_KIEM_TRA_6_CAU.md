@@ -347,6 +347,25 @@ FROM TransactionsInPeriod;
 ```
 > `ROWS UNBOUNDED PRECEDING` nghĩa là: tính tổng từ dòng đầu tiên đến dòng hiện tại. SQL Server tính trong 1 lần quét, không cần vòng lặp.
 
+#### Ví dụ minh họa 3 bước (dùng để giải thích cho thầy)
+
+```
+EXEC SP_SaoKeTaiKhoan @SOTK='000000001', @TUNGAY='2026-07-01', @DENNGAY='2026-07-31'
+
+Bước 1: SODU_HIENTAI = 10,000,000 (đọc local, TaiKhoan nhân bản full)
+Bước 2: BIENDONG_SAU_TUNGAY = 2,000,000 (tổng GD từ 01/07 đến nay, local+LINK1)
+         → SODU_DAUKY = 10,000,000 - 2,000,000 = 8,000,000
+Bước 3: Lấy GD trong [01/07, 31/07], tính SODU_LUYKE:
+
+  NGAYGD     | LOAIGD | SOTIEN    | SODU_LUYKE
+  -----------|--------|-----------|------------
+  2026-07-01 | GT     | 5,000,000 | 13,000,000   (8tr + 5tr)
+  2026-07-05 | RT     | 2,000,000 | 11,000,000   (13tr - 2tr)
+  2026-07-10 | CT     | 1,000,000 | 10,000,000   (11tr - 1tr)
+  2026-07-15 | NT     | 3,000,000 | 13,000,000   (10tr + 3tr)
+  2026-07-20 | GT     | 2,000,000 | 15,000,000   (13tr + 2tr)
+```
+
 ### Cách kiểm tra khi demo
 
 ```sql

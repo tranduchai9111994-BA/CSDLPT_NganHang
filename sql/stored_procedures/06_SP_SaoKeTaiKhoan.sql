@@ -108,6 +108,25 @@ BEGIN
         SELECT NGAYGD, SOTIEN, 'NT' AS LOAIGD FROM [LINK1].NGANHANG.dbo.GD_CHUYENTIEN  -- GD nhận LINK1
         WHERE SOTK_NHAN = @SOTK AND NGAYGD BETWEEN @TUNGAY AND @DENNGAY
     ),
+    -- =========================================================================================
+    -- GIẢI THÍCH WINDOW FUNCTION — tính tổng lũy kế (Running Balance)
+    --
+    -- Cú pháp:
+    --   SUM( CASE WHEN ... THEN SOTIEN ... )
+    --   OVER (ORDER BY NGAYGD ASC ROWS UNBOUNDED PRECEDING)
+    --
+    -- Diễn giải:
+    --   ORDER BY NGAYGD ASC         = sắp xếp theo ngày tăng dần
+    --   ROWS UNBOUNDED PRECEDING    = tính từ dòng đầu tiên đến dòng hiện tại
+    --
+    -- Ví dụ: Giả sử SODU_DAUKY = 10,000,000
+    --   Dòng 1 (01/07): Gửi +5tr  → SUM = 5,000,000  → SODU = 10tr + 5tr  = 15,000,000
+    --   Dòng 2 (05/07): Rút -2tr  → SUM = 5-2 = 3tr  → SODU = 10tr + 3tr  = 13,000,000
+    --   Dòng 3 (10/07): Rút -1tr  → SUM = 5-2-1 = 2tr → SODU = 10tr + 2tr = 12,000,000
+    --   Dòng 4 (15/07): Gửi +3tr  → SUM = 5-2-1+3 = 5tr → SODU = 10tr+5tr = 15,000,000
+    --
+    -- SQL Server tự tính trong 1 lần scan, không cần vòng lặp hay cursor.
+    -- =========================================================================================
     RunningBalance AS (  -- CTE: tính số dư lũy kế cho từng giao dịch
         SELECT
             NGAYGD,   -- Ngày giao dịch

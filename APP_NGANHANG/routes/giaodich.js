@@ -1,7 +1,7 @@
 // routes/giaodich.js
 const express = require('express');
 const router  = express.Router();
-const { querySQL, execSP } = require('../db');
+const { querySQL, execSP, execSPAdmin } = require('../db');
 
 function getServer(req) { return req.session.user.SERVER || 'BENTHANH'; }
 
@@ -39,7 +39,7 @@ router.post('/guitien', async (req, res) => {
   const user   = req.session.user;
   const { SOTK, SOTIEN } = req.body;
   try {
-    await execSP(req, server, 'sp_GuiTien', {
+    await execSPAdmin(server, 'sp_GuiTien', {
       SOTK: SOTK.trim(), SOTIEN: parseFloat(SOTIEN), MANV: user.MANV
     });
     res.redirect('/giaodich/goirut?success=Gửi tiền thành công! Số tiền: ' + Number(SOTIEN).toLocaleString('vi-VN') + ' VNĐ');
@@ -54,7 +54,7 @@ router.post('/ruttien', async (req, res) => {
   const user   = req.session.user;
   const { SOTK, SOTIEN } = req.body;
   try {
-    await execSP(req, server, 'sp_RutTien', {
+    await execSPAdmin(server, 'sp_RutTien', {
       SOTK: SOTK.trim(), SOTIEN: parseFloat(SOTIEN), MANV: user.MANV
     });
     res.redirect('/giaodich/goirut?success=Rút tiền thành công! Số tiền: ' + Number(SOTIEN).toLocaleString('vi-VN') + ' VNĐ');
@@ -91,7 +91,7 @@ router.post('/chuyentien', async (req, res) => {
   const user   = req.session.user;
   const { SOTK_CHUYEN, SOTK_NHAN, SOTIEN } = req.body;
   try {
-    await execSP(req, server, 'sp_ChuyenTien', {
+    await execSPAdmin(server, 'sp_ChuyenTien', {
       SOTK_CHUYEN: SOTK_CHUYEN.trim(),
       SOTK_NHAN: SOTK_NHAN.trim(),
       SOTIEN: parseFloat(SOTIEN),

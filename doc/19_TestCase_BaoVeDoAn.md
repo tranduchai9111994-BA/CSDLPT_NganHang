@@ -140,7 +140,7 @@ Kiểm tra dữ liệu trả về khác nhau theo NHOM (NganHang / ChiNhanh / Kh
 **Nhánh ChiNhanh (BT001):**
 - Code: [`routes/taikhoan.js:50–71`](../APP_NGANHANG/routes/taikhoan.js)
 - TaiKhoan nhân bản toàn vẹn → hiển thị **tất cả TK**, không filter theo MACN
-- KhachHang phân mảnh ngang → dùng `getAdminPool()` (tài khoản HTKN) + `OUTER APPLY (UNION ALL local + LINK1)` để lấy tên KH cả 2 chi nhánh
+- KhachHang phân mảnh ngang → dùng `queryAdminSQL()` (tài khoản HTKN, có retry tự động) + `OUTER APPLY (UNION ALL local + LINK1)` để lấy tên KH cả 2 chi nhánh
 - User ChiNhanh không có quyền query LINK1 → bắt buộc dùng admin pool
 
 **Nhánh KhachHang (CMND):**
@@ -199,11 +199,12 @@ Kiểm tra sinh số tài khoản không trùng theo prefix chi nhánh.
 - Code: [`routes/taikhoan.js:100–128`](../APP_NGANHANG/routes/taikhoan.js)
 - Form gửi `KH_MACN` (chi nhánh của KH được chọn, lấy từ `data-macn` trên `<option>`)
 - So sánh `KH_MACN` vs `user.MACN`:
-  - **Cùng chi nhánh:** `MACN = user.MACN`, SOTK prefix theo user.MACN → gọi `execSP(req, server, ...)` local
-  - **Khác chi nhánh (cross-branch):** `MACN = KH_MACN`, SOTK prefix theo KH_MACN → gọi `execSPAdmin(khMacn, ...)` trên server có KH
+  - **Cùng chi nhánh:** `MACN = user.MACN`, SOTK prefix theo user.MACN → gọi `execSPAdmin(userMacn, ...)` local
+  - **Khác chi nhánh (cross-branch):** `MACN = KH_MACN`, SOTK prefix theo chi nhánh NV → gọi `execSPAdmin(khMacn, ...)` trên server có KH
+  - **Cả 2 case đều dùng `execSPAdmin` (sqlcmd)** vì SP dùng `BEGIN DISTRIBUTED TRANSACTION` → tedious không hỗ trợ MSDTC
 
 **Bước 4 — Gọi SP mở TK**
-- SP `sp_MoTaiKhoan`: kiểm tra SOTK chưa tồn tại, kiểm tra CMND tồn tại (check local trước → không có thì check `[LINK1]` đối tác, vì KhachHang phân mảnh ngang theo chi nhánh), INSERT INTO TaiKhoan
+- SP `sp_MoTaiKhoan`: kiểm tra SOTK chưa tồn tại, kiểm tra CMND tồn tại (check local trước → không có thì check `[LINK1]` đối tác — **TRƯỚC** `BEGIN DISTRIBUTED TRANSACTION` để tránh conflict với merge trigger), INSERT trong `BEGIN DISTRIBUTED TRANSACTION` riêng
 - Cross-branch: INSERT chạy trên server có KH → thỏa cả **FK_TaiKhoan_KhachHang** (CMND) lẫn **FK_TaiKhoan_ChiNhanh** (MACN)
 - TaiKhoan nhân bản toàn vẹn → Merge Replication tự đồng bộ sang server đối tác
 - Constraint `CHECK (SODU >= 0)` trong DB chặn số dư âm

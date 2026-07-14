@@ -76,8 +76,8 @@ Dùng tài khoản `HTKN` (có quyền `securityadmin`). Chỉ dùng cho `quantr
 
 | Hàm | Cách gọi | Dùng khi |
 |-----|----------|----------|
-| `execSP(req, serverKey, spName, params)` | tedious driver (mssql package) | SP thông thường — GuiTien, RutTien, MoTaiKhoan, Login... |
-| `execSPAdmin(serverKey, spName, params)` | `sqlcmd` (CLI, Native Client) | SP có `BEGIN DISTRIBUTED TRANSACTION` — ChuyenTien, ChuyenNhanVien |
+| `execSP(req, serverKey, spName, params)` | tedious driver (mssql package) | SP thông thường — Login, DanhSachTaiKhoan... |
+| `execSPAdmin(serverKey, spName, params)` | `sqlcmd` (CLI, Native Client) | SP có `BEGIN DISTRIBUTED TRANSACTION` — **GuiTien, RutTien, ChuyenTien, MoTaiKhoan**, ChuyenNhanVien, PhucHoiNhanVien |
 
 **Tại sao cần `execSPAdmin` cho Distributed Transaction?**
 
@@ -138,7 +138,21 @@ SQL Server SQL1: EXEC sp_ChuyenTien @SOTK_CHUYEN=..., @SOTK_NHAN=..., ...
 
 ---
 
-## 5. Quản Lý Session & Pool
+## 5. Connection Pool Resilience (Retry & Recovery)
+
+Pool có thể rơi vào trạng thái "chết" (session bị kill, mất kết nối mạng, SQL Server restart). `db.js` xử lý bằng 3 cơ chế:
+
+1. **`isPoolDead(pool)`**: Kiểm tra `pool.connected` + `pool._closed` trước mỗi lần reuse. Nếu pool chết → xóa khỏi cache, tạo pool mới.
+
+2. **`isSessionKilled(err)`**: Nhận diện các lỗi session bị kill (`kill state`, `connection is closed`, `socket error`, `ECONNCLOSED`, `ESOCKET`).
+
+3. **Retry logic** (1 lần) trong `execSP`, `querySQL`, `queryAdminSQL`: khi gặp lỗi session killed → xóa pool cũ → tạo pool mới → thử lại 1 lần. Nếu vẫn lỗi → throw.
+
+**Hàm `queryAdminSQL(serverKey, sqlStr, params)`** — bổ sung mới, tương tự `querySQL` nhưng dùng admin pool (`HTKN`). Có retry tự động. Dùng cho các query cần quyền cao hoặc query LINK1 (admin pool có mapping Linked Server, user pool thường thì không).
+
+---
+
+## 6. Quản Lý Session & Pool
 
 - Pool được cache trong module-level object `pools` theo key `${serverKey}_${username}`.
 - Khi user logout (`/logout`), `req.session.destroy()` xóa session nhưng **pool vẫn tồn tại** trong bộ nhớ process.
@@ -147,7 +161,7 @@ SQL Server SQL1: EXEC sp_ChuyenTien @SOTK_CHUYEN=..., @SOTK_NHAN=..., ...
 
 ---
 
-## 6. Xác Định Server Trong Routes
+## 7. Xác Định Server Trong Routes
 
 Hàm helper xuất hiện trong mọi route file:
 

@@ -370,6 +370,62 @@ PRINT '--- Hoàn thành: ' + CAST(@count AS varchar) + ' orphaned user(s) ---';
 
 ---
 
+## Sự cố 11: Lỗi "session is in the kill state" khi mở tài khoản [14/07/2026]
+
+**Triệu chứng:**
+```
+Cannot continue the execution because the session is in the kill state.
+```
+Xảy ra khi nhân viên ChiNhanh mở tài khoản mới (POST `/taikhoan/mo`), gọi `sp_MoTaiKhoan`.
+
+**Nguyên nhân gốc rễ:**
+SP phiên bản cũ kiểm tra KH bằng `IF NOT EXISTS (... KhachHang) AND NOT EXISTS (... [LINK1].NGANHANG.dbo.KhachHang)` rồi INSERT vào `TaiKhoan` **trong cùng scope**. Bảng `TaiKhoan` có Merge Replication → INSERT kích hoạt trigger `MSmerge_ins_*`. Trigger này cố enlist vào transaction hiện tại, nhưng scope đã có query LINK1 (linked server) → SQL Server tạo **implicit distributed transaction**. Conflict giữa implicit distributed tran và merge trigger → SQL Server kill session.
+
+**Pattern gốc (đã thấy ở `sp_GuiTien`):** Các SP khác (`sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien`) hoạt động đúng vì chúng đọc local/LINK1 **TRƯỚC**, rồi mới `BEGIN DISTRIBUTED TRANSACTION` chỉ chứa write — merge trigger chạy bình thường trong distributed tran tường minh.
+
+**Cách xử lý đã áp dụng (3 phần):**
+
+**1. Sửa SP `sp_MoTaiKhoan`** ([`sql/stored_procedures/20_SP_MoTaiKhoan.sql`](../sql/stored_procedures/20_SP_MoTaiKhoan.sql)):
+- Tách check KH (local + LINK1) ra trước, lưu kết quả vào biến `@KHFound`.
+- INSERT nằm trong `BEGIN DISTRIBUTED TRANSACTION` riêng biệt — scope chỉ có write, không có LINK1 query.
+- Thêm `SET XACT_ABORT ON` + `TRY/CATCH` chuẩn.
+```sql
+-- SOTK đã được sinh tự động ở tầng app (sinhSOTK) → không cần check trùng
+DECLARE @KHFound bit = 0;
+IF EXISTS (SELECT 1 FROM KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
+    SET @KHFound = 1;
+ELSE IF EXISTS (SELECT 1 FROM [LINK1].NGANHANG.dbo.KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
+    SET @KHFound = 1;
+
+-- INSERT trong distributed tran riêng — không có LINK1 query
+BEGIN DISTRIBUTED TRANSACTION;
+INSERT INTO TaiKhoan(...) VALUES(...);
+COMMIT TRANSACTION;
+```
+Deploy lên cả SQL1 và SQL2.
+
+**2. Sửa route `taikhoan.js`:**
+- POST `/taikhoan/mo` luôn gọi `execSPAdmin` (sqlcmd) thay vì `execSP` (tedious) — vì SP nay dùng `BEGIN DISTRIBUTED TRANSACTION`, tedious không hỗ trợ MSDTC.
+- Dùng `queryAdminSQL` thay vì `getAdminPool` trực tiếp cho `getAllKhachHang()` và GET `/taikhoan` (ChiNhanh) — có retry tự động khi pool bị lỗi.
+
+**3. Tăng cường connection pool resilience (`db.js`):**
+- Thêm `isPoolDead()`: kiểm tra pool `connected` + `_closed` trước khi reuse.
+- Thêm `isSessionKilled()`: nhận diện lỗi kill state / connection closed / socket error.
+- Retry logic (1 lần) trong `execSP`, `querySQL`, `queryAdminSQL`: xóa pool chết → tạo mới → thử lại.
+- Hàm mới `queryAdminSQL`: admin pool query với retry (thay cho dùng `getAdminPool` trực tiếp).
+
+**4. `start.bat` — tự kill process cũ:**
+```bat
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3001.*LISTENING"') do (
+    taskkill /F /PID %%a >nul 2>&1
+)
+```
+
+**Bài học rút ra (rất hay bị hỏi vấn đáp):**
+> Khi bảng có Merge Replication trigger (`MSmerge_ins_*`, `MSmerge_upd_*`, `MSmerge_del_*`), **không được** query Linked Server cùng scope với INSERT/UPDATE/DELETE lên bảng đó mà không có distributed transaction tường minh. Query LINK1 tạo implicit distributed tran → conflict với trigger → session bị kill. **Giải pháp chuẩn:** đọc LINK1 trước, lưu kết quả vào biến, rồi write trong `BEGIN DISTRIBUTED TRANSACTION` riêng (scope chỉ chứa write).
+
+---
+
 ## Sự cố 6: Dữ liệu TRACUU (SQL3) không đồng bộ sau khi migration
 
 **Triệu chứng:**

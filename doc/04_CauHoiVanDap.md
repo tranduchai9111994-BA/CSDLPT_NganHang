@@ -355,4 +355,14 @@ SP chạy với `EXECUTE AS OWNER` để có đủ quyền tạo login (vì user
 
 ### 8.5. Nếu MSDTC chưa bật thì sao?
 
-**Trả lời:** Mọi lệnh `BEGIN DISTRIBUTED TRANSACTION` sẽ fail với lỗi "MSDTC is not available". Khi đó chuyển tiền liên chi nhánh và chuyển NV sẽ không hoạt động. Cần vào Services (services.msc) → tìm "Distributed Transaction Coordinator" → Start. Phải bật trên tất cả server tham gia giao dịch phân tán.
+**Trả lời:** Mọi lệnh `BEGIN DISTRIBUTED TRANSACTION` sẽ fail với lỗi "MSDTC is not available". Khi đó chuyển tiền liên chi nhánh, chuyển NV, và mở tài khoản sẽ không hoạt động. Cần vào Services (services.msc) → tìm "Distributed Transaction Coordinator" → Start. Phải bật trên tất cả server tham gia giao dịch phân tán.
+
+### 8.6. Tại sao `sp_MoTaiKhoan` phải tách query LINK1 ra trước `BEGIN DISTRIBUTED TRANSACTION`?
+
+**Trả lời:** Bảng `TaiKhoan` có Merge Replication → INSERT kích hoạt trigger `MSmerge_ins_*`. Nếu trong cùng scope có cả query `[LINK1]` (kiểm tra KH) và INSERT, SQL Server tạo **implicit distributed transaction**. Trigger cố enlist vào implicit DT này → conflict → SQL Server kill session với lỗi "Cannot continue the execution because the session is in the kill state".
+
+**Giải pháp:** Check KH (local + LINK1) **TRƯỚC**, lưu kết quả vào biến `@KHFound`. INSERT nằm trong `BEGIN DISTRIBUTED TRANSACTION` riêng — scope chỉ có write, không có LINK1 query → merge trigger hoạt động bình thường. Pattern này nhất quán với `sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien` (đọc trước, write trong DTC).
+
+### 8.7. Tại sao `sp_MoTaiKhoan` phải gọi qua `sqlcmd` thay vì `mssql` driver?
+
+**Trả lời:** SP dùng `BEGIN DISTRIBUTED TRANSACTION` → yêu cầu driver hỗ trợ MSDTC (two-phase commit). Driver `tedious` (dùng bởi package `mssql` trong Node.js) **không hỗ trợ** MSDTC vì chỉ implement protocol TDS cơ bản. `sqlcmd` dùng Native Client của Windows → hỗ trợ MSDTC đầy đủ. Hệ thống dùng hàm `execSPAdmin` trong `db.js` để gọi `sqlcmd` qua `child_process.execFile`.

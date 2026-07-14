@@ -1,7 +1,7 @@
 // routes/taikhoan.js
 const express = require('express');
 const router  = express.Router();
-const { querySQL, execSP, execSPAdmin, querySP, getAdminPool, sql } = require('../db');
+const { querySQL, queryAdminSQL, execSP, execSPAdmin, querySP, getAdminPool, sql } = require('../db');
 
 function getServer(req) { return req.session.user.SERVER || 'BENTHANH'; }
 
@@ -11,8 +11,7 @@ const MACN_PREFIX = { BENTHANH: 'BT', TANDINH: 'TD' };
 // KhachHang phân mảnh ngang → local chỉ có KH chi nhánh mình.
 // Dùng admin pool + LINK1 để lấy KH cả 2 chi nhánh cho form mở TK.
 async function getAllKhachHang(serverKey) {
-  const pool = await getAdminPool(serverKey);
-  const result = await pool.request().query(`
+  return await queryAdminSQL(serverKey, `
     SELECT RTRIM(CMND) AS CMND, RTRIM(HO)+' '+RTRIM(TEN) AS HoTen, RTRIM(MACN) AS MACN
     FROM KhachHang
     UNION ALL
@@ -20,7 +19,6 @@ async function getAllKhachHang(serverKey) {
     FROM [LINK1].NGANHANG.dbo.KhachHang
     ORDER BY MACN, HoTen
   `);
-  return result.recordset || [];
 }
 
 // Sinh số TK tự động: <prefix_chinhanh> + 7 chữ số (ví dụ BT0000001, TD0000001)
@@ -51,8 +49,7 @@ router.get('/', async (req, res) => {
       // TaiKhoan nhân bản toàn vẹn → hiển thị tất cả, không filter theo MACN
       // KhachHang phân mảnh ngang → UNION local + LINK1 để có tên KH cả 2 chi nhánh
       // Dùng admin pool vì user ChiNhanh không có quyền query LINK1
-      const pool = await getAdminPool(server);
-      const result = await pool.request().query(`
+      const rows = await queryAdminSQL(server, `
         SELECT RTRIM(tk.SOTK) AS SOTK, RTRIM(tk.CMND) AS CMND,
                RTRIM(kh.HO)+' '+RTRIM(kh.TEN) AS HoTen,
                tk.SODU, RTRIM(tk.MACN) AS MACN,
@@ -67,7 +64,6 @@ router.get('/', async (req, res) => {
         ) kh
         ORDER BY tk.NGAYMOTK DESC
       `);
-      const rows = result.recordset || [];
       return res.render('taikhoan/list', { rows, error: req.query.error || null, success: req.query.success || null });
     } else {
       // KhachHang: dùng SP để tránh raw SELECT trực tiếp (KhachHang không có GRANT SELECT trên TaiKhoan)
@@ -116,11 +112,11 @@ router.post('/mo', async (req, res) => {
     SOTK = await sinhSOTK(req, server, userMacn);
     const spParams = { SOTK, CMND, SODU: parseFloat(SODU) || 0, MACN };
 
-    if (crossBranch) {
-      await execSPAdmin(khMacn, 'sp_MoTaiKhoan', spParams);
-    } else {
-      await execSP(req, server, 'sp_MoTaiKhoan', spParams);
-    }
+    // SP dùng BEGIN DISTRIBUTED TRANSACTION + query LINK1 → phải gọi qua sqlcmd
+    // Cross-branch: gọi trên server chi nhánh KH (FK_TaiKhoan_KhachHang)
+    // Cùng branch: gọi trên server đăng nhập
+    const targetServer = crossBranch ? khMacn : userMacn;
+    await execSPAdmin(targetServer, 'sp_MoTaiKhoan', spParams);
     res.redirect('/taikhoan?success=Mở tài khoản thành công');
   } catch (err) {
     const khRows = await getAllKhachHang(server);

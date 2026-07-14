@@ -44,6 +44,7 @@
 2. **Linked Server đúng quy ước.** Mọi truy vấn xuyên site dùng cú pháp 4 phần `[LINK1].NGANHANG.dbo.<Table>`; `LINK1` = đối tác, không loopback. `sp_MoTaiKhoan` validate khách hàng bằng check local trước → không có thì check `[LINK1]` (đối tác) — nhất quán với các SP khác và không phụ thuộc NGUON.
 3. **Sao kê tính tại tầng DB.** `SP_SaoKeTaiKhoan` gộp giao dịch local + `LINK1`, tính số dư đầu kỳ bằng "trừ ngược" và số dư lũy kế bằng `SUM() OVER(...)`. Logic nặng nằm ở SQL, app chỉ render. Đây là cách làm phân tán đúng (giảm IO mạng, không kéo data thô về app).
 4. **Phân mảnh ngang theo `MACN`** cho `KhachHang`, `NhanVien`, `GD_GOIRUT`, `GD_CHUYENTIEN`; replicate full `KhachHang` về TRACUU để NganHang tra cứu toàn cục mà không đụng site giao dịch. Route `khachhang.js`/`nhanvien.js` khi NganHang → đọc TRACUU; ChiNhanh → đọc local. Đúng mô hình.
+6. **Tách LINK1 query khỏi distributed tran.** `sp_MoTaiKhoan` check KH qua LINK1 **trước** `BEGIN DISTRIBUTED TRANSACTION`, lưu kết quả vào biến `@KHFound`. INSERT nằm trong distributed tran riêng — không có LINK1 query → merge trigger hoạt động bình thường. Pattern này nhất quán với `sp_GuiTien`/`sp_RutTien`/`sp_ChuyenTien` (đọc trước, write trong DTC). Xem [Sự cố 11](17_Su_Co_Va_Xu_Ly.md#sự-cố-11).
 5. **Xác thực & phân quyền nhiều lớp.** SQL Authentication theo từng người (`auth.js` mở pool bằng chính username/password người dùng) → mọi thao tác được định danh để audit; `sp_Login_App` map Login→Role qua `sys.database_role_members`; role DB `GRANT/DENY`; middleware `requireRole`; ẩn/hiện UI theo `user.NHOM`.
 
 ---
@@ -201,7 +202,7 @@ execFile('sqlcmd', [..., ...vArgs, '-Q', query, '-b']);
 
 > ℹ️ `execSPAdmin` được gọi tại:
 > - [`nhanvien.js`](../APP_NGANHANG/routes/nhanvien.js) — `SP_ChuyenNhanVien` (chuyển NV) và `SP_PhucHoiNhanVien` (phục hồi NV).
-> - [`taikhoan.js`](../APP_NGANHANG/routes/taikhoan.js) — `sp_MoTaiKhoan` cross-branch (mở TK cho KH chi nhánh khác).
+> - [`taikhoan.js`](../APP_NGANHANG/routes/taikhoan.js) — `sp_MoTaiKhoan` (**luôn**, không chỉ cross-branch — SP dùng `BEGIN DISTRIBUTED TRANSACTION`).
 >
 > Rủi ro thực tế thấp (input từ dropdown/form có kiểm soát), nhưng fix là đúng về kiến trúc.
 

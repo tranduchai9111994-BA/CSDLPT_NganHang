@@ -1,43 +1,84 @@
-﻿USE NGANHANG;  -- Chọn database NGANHANG
+USE NGANHANG;
 GO
 
 -- ==========================================================================
--- SP MỞ TÀI KHOẢN (tạo bản ghi TaiKhoan mới cho khách hàng)
--- Chạy trên: NGUON, BENTHANH (SQL1), TANDINH (SQL2) — SQL3/TRACUU chỉ tra cứu.
--- Gọi bởi: routes/taikhoan.js — POST /taikhoan/mo
--- Hỗ trợ mở TK cross-branch: khi KH thuộc chi nhánh khác, route gọi SP này
--- qua execSPAdmin trên server của chi nhánh KH (không phải server đăng nhập),
--- vì FK_TaiKhoan_KhachHang chỉ thỏa khi INSERT trên server có KhachHang gốc.
+-- SP MO TAI KHOAN (tao ban ghi TaiKhoan moi cho khach hang)
+-- Chay tren: BENTHANH (SQL1), TANDINH (SQL2).
+-- Goi boi: routes/taikhoan.js - POST /taikhoan/mo (qua execSPAdmin / sqlcmd)
+--
+-- KhachHang phan manh ngang -> local chi co KH chi nhanh minh.
+-- Check KH can query ca LINK1 (chi nhanh doi tac).
+--
+-- Luu y merge replication: INSERT vao TaiKhoan kich hoat MSmerge_ins trigger.
+-- Neu query LINK1 nam cung scope voi INSERT -> implicit distributed tran
+-- conflict voi merge trigger -> session bi kill.
+-- Giai phap: check KH (local + LINK1) TRUOC, luu ket qua vao bien.
+-- INSERT nam trong BEGIN DISTRIBUTED TRANSACTION rieng, khong con LINK1 query.
+-- Giong pattern sp_GuiTien: read truoc -> distributed tran chi chua write.
 -- ==========================================================================
 CREATE OR ALTER PROCEDURE [dbo].[sp_MoTaiKhoan]
-    @SOTK nchar(9),    -- Tham số: Số tài khoản mới (đã được sinh sẵn ở tầng ứng dụng)
-    @CMND nchar(10),   -- Tham số: Số CMND của khách hàng đứng tên TK
-    @SODU money,       -- Tham số: Số dư ban đầu khi mở TK
-    @MACN nchar(10)    -- Tham số: Mã chi nhánh quản lý TK (có thể khác chi nhánh của KH)
+    @SOTK nchar(9),         -- So tai khoan moi (da sinh san o tang app bang sinhSOTK)
+    @CMND nchar(10),        -- So CMND cua khach hang dung ten TK
+    @SODU money,            -- So du ban dau khi mo TK
+    @MACN nchar(10)         -- Ma chi nhanh quan ly TK (= chi nhanh KH)
 AS
 BEGIN
-    SET NOCOUNT ON;  -- Tắt thông báo đếm dòng ảnh hưởng
+    SET NOCOUNT ON;          -- Tat thong bao so dong anh huong (giam traffic)
+    SET XACT_ABORT ON;       -- Tu dong ROLLBACK khi gap bat ky loi nao (bat buoc cho DTC)
 
-    -- Kiểm tra số tài khoản đã tồn tại chưa (tránh trùng khóa chính)
-    IF EXISTS (SELECT 1 FROM TaiKhoan WHERE RTRIM(SOTK) = RTRIM(@SOTK))
+    -- ======================================================================
+    -- BUOC 1: Kiem tra khach hang ton tai (TRUOC distributed tran)
+    -- KhachHang phan manh ngang: SQL1 chi co KH BENTHANH, SQL2 chi co KH TANDINH.
+    -- Nen phai check ca local va LINK1 (chi nhanh doi tac) de ho tro cross-branch.
+    -- QUAN TRONG: phai check TRUOC BEGIN DISTRIBUTED TRANSACTION.
+    -- Neu check LINK1 nam cung scope voi INSERT -> merge trigger tao implicit
+    -- distributed tran -> conflict -> SQL Server kill session.
+    -- ======================================================================
+    DECLARE @KHFound bit = 0;   -- Bien luu ket qua: 0 = chua tim thay, 1 = da tim thay
+
+    -- Check 1: Tim KH trong bang KhachHang local (cung chi nhanh)
+    IF EXISTS (SELECT 1 FROM KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
+        SET @KHFound = 1;       -- Tim thay KH o local -> khong can query LINK1
+
+    -- Check 2: Neu local khong co -> query LINK1 (chi nhanh doi tac qua Linked Server)
+    ELSE IF EXISTS (SELECT 1 FROM [LINK1].NGANHANG.dbo.KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
+        SET @KHFound = 1;       -- Tim thay KH o chi nhanh doi tac
+
+    -- Neu ca local va LINK1 deu khong co -> bao loi, ket thuc SP
+    IF @KHFound = 0
     BEGIN
-        RAISERROR(N'Số tài khoản đã tồn tại.',16,1);
-        RETURN;
+        RAISERROR(N'Khach hang khong ton tai tren he thong.',16,1);
+        RETURN;                 -- Thoat SP, khong INSERT
     END
 
-    -- Kiểm tra khách hàng có tồn tại trên hệ thống không.
-    -- KhachHang phân mảnh ngang theo chi nhánh (filter row) → local chỉ có KH
-    -- của chi nhánh mình. Check local trước, không có thì check LINK1 (đối tác)
-    -- để hỗ trợ mở TK cross-branch mà không phụ thuộc NGUON.
-    IF NOT EXISTS (SELECT 1 FROM KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
-       AND NOT EXISTS (SELECT 1 FROM [LINK1].NGANHANG.dbo.KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
-    BEGIN
-        RAISERROR(N'Khách hàng không tồn tại trên hệ thống.',16,1);
-        RETURN;
-    END
+    -- ======================================================================
+    -- BUOC 2: INSERT trong BEGIN DISTRIBUTED TRANSACTION
+    -- Scope nay CHI CO lenh INSERT, KHONG co bat ky query LINK1 nao.
+    -- -> merge replication trigger (MSmerge_ins_*) hoat dong binh thuong
+    --    trong distributed tran tuong minh, khong bi conflict.
+    -- Sau INSERT, Merge Replication tu dong dong bo TK sang server doi tac.
+    -- ======================================================================
+    BEGIN TRY
+        BEGIN DISTRIBUTED TRANSACTION;  -- Mo giao dich phan tan (MSDTC 2-phase commit)
 
-    -- Tạo tài khoản mới, ngày mở TK = thời điểm hiện tại
-    INSERT INTO TaiKhoan(SOTK, CMND, SODU, MACN, NGAYMOTK)
-    VALUES(@SOTK, @CMND, @SODU, @MACN, GETDATE());
+        -- Chen ban ghi TaiKhoan moi
+        -- SOTK: da sinh tu dong (BT0000001 / TD0000001) o tang app
+        -- CMND: lien ket voi KhachHang (FK_TaiKhoan_KhachHang)
+        -- MACN: chi nhanh quan ly TK (FK_TaiKhoan_ChiNhanh)
+        -- NGAYMOTK: ngay mo TK = thoi diem hien tai
+        INSERT INTO TaiKhoan(SOTK, CMND, SODU, MACN, NGAYMOTK)
+        VALUES(@SOTK, @CMND, @SODU, @MACN, GETDATE());
+
+        COMMIT TRANSACTION;            -- Xac nhan giao dich -> MSDTC commit ca 2 site
+
+    END TRY
+    BEGIN CATCH
+        -- Neu co loi bat ky -> ROLLBACK toan bo (ca 2 site nho MSDTC)
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+
+        -- Lay thong bao loi goc va nem lai cho tang app xu ly
+        DECLARE @ErrMsg nvarchar(4000) = ERROR_MESSAGE();
+        RAISERROR(@ErrMsg, 16, 1);
+    END CATCH
 END
 GO

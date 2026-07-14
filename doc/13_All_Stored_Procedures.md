@@ -179,7 +179,8 @@ END
 ## sp_MoTaiKhoan
 
 **Chạy trên:** BENTHANH / TANDINH  
-**Gọi bởi:** `taikhoan.js` – POST `/taikhoan/mo` (qua `execSP` hoặc `execSPAdmin` cho cross-branch)
+**Gọi bởi:** `taikhoan.js` – POST `/taikhoan/mo` (luôn qua `execSPAdmin` / sqlcmd vì SP dùng `BEGIN DISTRIBUTED TRANSACTION`)  
+**File SQL:** [`sql/stored_procedures/20_SP_MoTaiKhoan.sql`](../sql/stored_procedures/20_SP_MoTaiKhoan.sql)
 
 ```sql
 CREATE OR ALTER PROCEDURE [dbo].[sp_MoTaiKhoan]
@@ -190,36 +191,49 @@ CREATE OR ALTER PROCEDURE [dbo].[sp_MoTaiKhoan]
 AS
 BEGIN
     SET NOCOUNT ON;
+    SET XACT_ABORT ON;
 
-    IF EXISTS (SELECT 1 FROM TaiKhoan WHERE RTRIM(SOTK) = RTRIM(@SOTK))
-    BEGIN
-        RAISERROR(N'Số tài khoản đã tồn tại.',16,1);
-        RETURN;
-    END
+    -- Check KH local + LINK1 TRƯỚC khi mở distributed tran.
+    -- Lưu kết quả vào biến để không còn query LINK1 trong scope INSERT.
+    DECLARE @KHFound bit = 0;
+    IF EXISTS (SELECT 1 FROM KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
+        SET @KHFound = 1;
+    ELSE IF EXISTS (SELECT 1 FROM [LINK1].NGANHANG.dbo.KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
+        SET @KHFound = 1;
 
-    -- KhachHang phân mảnh ngang theo chi nhánh (filter row) → local chỉ có KH
-    -- của chi nhánh mình. Check local trước, không có thì check LINK1 (đối tác)
-    -- để hỗ trợ mở TK cross-branch mà không phụ thuộc NGUON.
-    IF NOT EXISTS (SELECT 1 FROM KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
-       AND NOT EXISTS (SELECT 1 FROM [LINK1].NGANHANG.dbo.KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
+    IF @KHFound = 0
     BEGIN
         RAISERROR(N'Khách hàng không tồn tại trên hệ thống.',16,1);
         RETURN;
     END
 
-    INSERT INTO TaiKhoan(SOTK, CMND, SODU, MACN, NGAYMOTK)
-    VALUES(@SOTK, @CMND, @SODU, @MACN, GETDATE());
+    -- INSERT trong distributed tran — scope này không có LINK1 query
+    -- nên merge trigger không gây conflict
+    BEGIN TRY
+        BEGIN DISTRIBUTED TRANSACTION;
+
+        INSERT INTO TaiKhoan(SOTK, CMND, SODU, MACN, NGAYMOTK)
+        VALUES(@SOTK, @CMND, @SODU, @MACN, GETDATE());
+
+        COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        DECLARE @ErrMsg nvarchar(4000) = ERROR_MESSAGE();
+        RAISERROR(@ErrMsg, 16, 1);
+    END CATCH
 END
 ```
 
 > **Flow:**
-> 1. Kiểm tra SOTK chưa tồn tại trong `TaiKhoan` local.
-> 2. Kiểm tra CMND tồn tại: check `KhachHang` local trước (KH cùng chi nhánh), không có thì check qua `[LINK1]` (KH chi nhánh đối tác). Nhờ SQL short-circuit `AND`, đa số case (KH cùng chi nhánh) chỉ cần 1 query local, không tốn network.
-> 3. INSERT vào `TaiKhoan` local → Merge Replication tự đồng bộ sang các site khác.
+> 1. Kiểm tra CMND tồn tại: check `KhachHang` local trước, không có thì check qua `[LINK1]` (đối tác). **Quan trọng:** check LINK1 phải nằm **TRƯỚC** `BEGIN DISTRIBUTED TRANSACTION` — nếu nằm cùng scope với INSERT, merge replication trigger (`MSmerge_ins_*`) trên TaiKhoan sẽ tạo implicit distributed tran conflict → SQL Server kill session (xem [Sự cố 11](17_Su_Co_Va_Xu_Ly.md#sự-cố-11)).
+> 2. INSERT trong `BEGIN DISTRIBUTED TRANSACTION` riêng (scope chỉ có write, không có LINK1 query) → merge trigger hoạt động bình thường → Replication đồng bộ sang các site khác.
 >
 > **Cross-branch (app layer):** KhachHang phân mảnh ngang + TaiKhoan có FK trên cả CMND và MACN → cả 2 FK chỉ thỏa trên server có KH. `taikhoan.js` POST `/mo` so sánh `KH_MACN` (chi nhánh KH) vs `user.MACN`:
-> - **Cùng chi nhánh:** gọi `execSP(req, server, ...)` — INSERT local, FK thỏa.
-> - **Khác chi nhánh:** gán `MACN = KH_MACN`, sinh SOTK theo prefix KH_MACN, gọi `execSPAdmin(khMacn, ...)` — INSERT trên server có KH → FK thỏa → TK replicate full sang server đối tác.
+> - **Cùng chi nhánh:** gọi `execSPAdmin(userMacn, ...)` — INSERT local, FK thỏa.
+> - **Khác chi nhánh:** gán `MACN = KH_MACN`, sinh SOTK theo prefix chi nhánh NV, gọi `execSPAdmin(khMacn, ...)` — INSERT trên server có KH → FK thỏa → TK replicate full sang server đối tác.
+>
+> **Tại sao luôn dùng `execSPAdmin` (sqlcmd)?** SP dùng `BEGIN DISTRIBUTED TRANSACTION` → driver `tedious` (Node.js) không hỗ trợ MSDTC → phải gọi qua `sqlcmd` (Native Client). Xem [Sự cố 4](17_Su_Co_Va_Xu_Ly.md#sự-cố-4).
 
 ---
 

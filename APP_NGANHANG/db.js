@@ -62,9 +62,17 @@ const pools = {};
 // Pool dùng account HTKN (admin) - cho các lệnh DDL cần quyền server-level
 const adminPools = {};
 
+function isPoolDead(pool) {
+  return !pool || !pool.connected || pool._closed;
+}
+
 async function getAdminPool(serverKey) {
   const key = serverKey || 'BENTHANH';
-  if (!adminPools[key]) {
+  if (isPoolDead(adminPools[key])) {
+    if (adminPools[key]) {
+      try { await adminPools[key].close(); } catch (_) {}
+      delete adminPools[key];
+    }
     const serverConfig = configs[key];
     if (!serverConfig) throw new Error(`Không tìm thấy cấu hình server: ${key}`);
     adminPools[key] = await new sql.ConnectionPool({
@@ -89,7 +97,11 @@ async function getPool(req, serverKey) {
   const targetServer = serverKey || user.SERVER || 'BENTHANH';
   const poolKey = `${targetServer}_${user.USERNAME}`;
 
-  if (!pools[poolKey]) {
+  if (isPoolDead(pools[poolKey])) {
+    if (pools[poolKey]) {
+      try { await pools[poolKey].close(); } catch (_) {}
+      delete pools[poolKey];
+    }
     const serverConfig = configs[targetServer];
     if (!serverConfig) {
       throw new Error(`Không tìm thấy cấu hình server: ${targetServer}`);
@@ -110,13 +122,36 @@ async function getPool(req, serverKey) {
   return pools[poolKey];
 }
 
+function isSessionKilled(err) {
+  const msg = (err.message || '').toLowerCase();
+  return msg.includes('kill state') || msg.includes('connection is closed') ||
+    msg.includes('socket error') || msg.includes('network') ||
+    err.code === 'ECONNCLOSED' || err.code === 'ESOCKET';
+}
+
 async function execSP(req, serverKey, spName, params = {}) {
-  const pool = await getPool(req, serverKey);
-  const request = pool.request();
-  for (const [key, val] of Object.entries(params)) {
-    request.input(key, val);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const pool = await getPool(req, serverKey);
+      const request = pool.request();
+      for (const [key, val] of Object.entries(params))
+        request.input(key, val);
+      return await request.execute(spName);
+    } catch (err) {
+      if (attempt === 0 && isSessionKilled(err)) {
+        const user = req.session.user;
+        const target = serverKey || user.SERVER || 'BENTHANH';
+        const poolKey = `${target}_${user.USERNAME}`;
+        if (pools[poolKey]) {
+          try { await pools[poolKey].close(); } catch (_) {}
+          delete pools[poolKey];
+        }
+        console.log(`[DB] Pool ${poolKey} bị lỗi session, đang tạo lại...`);
+        continue;
+      }
+      throw err;
+    }
   }
-  return await request.execute(spName);
 }
 
 // Map serverKey → tên SQL Server instance
@@ -171,13 +206,53 @@ async function querySP(req, serverKey, spName, params = {}) {
 }
 
 async function querySQL(req, serverKey, sqlStr, params = {}) {
-  const pool = await getPool(req, serverKey);
-  const request = pool.request();
-  for (const [key, val] of Object.entries(params)) {
-    request.input(key, val);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const pool = await getPool(req, serverKey);
+      const request = pool.request();
+      for (const [key, val] of Object.entries(params))
+        request.input(key, val);
+      const result = await request.query(sqlStr);
+      return result.recordset || [];
+    } catch (err) {
+      if (attempt === 0 && isSessionKilled(err)) {
+        const user = req.session.user;
+        const target = serverKey || user.SERVER || 'BENTHANH';
+        const poolKey = `${target}_${user.USERNAME}`;
+        if (pools[poolKey]) {
+          try { await pools[poolKey].close(); } catch (_) {}
+          delete pools[poolKey];
+        }
+        console.log(`[DB] Pool ${poolKey} bị lỗi session, đang tạo lại...`);
+        continue;
+      }
+      throw err;
+    }
   }
-  const result = await request.query(sqlStr);
-  return result.recordset || [];
 }
 
-module.exports = { getPool, getAdminPool, execSP, execSPAdmin, querySP, querySQL, sql, configs };
+async function queryAdminSQL(serverKey, sqlStr, params = {}) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const pool = await getAdminPool(serverKey);
+      const request = pool.request();
+      for (const [key, val] of Object.entries(params))
+        request.input(key, val);
+      const result = await request.query(sqlStr);
+      return result.recordset || [];
+    } catch (err) {
+      if (attempt === 0 && isSessionKilled(err)) {
+        const key = serverKey || 'BENTHANH';
+        if (adminPools[key]) {
+          try { await adminPools[key].close(); } catch (_) {}
+          delete adminPools[key];
+        }
+        console.log(`[DB Admin] Pool ${key} bị lỗi session, đang tạo lại...`);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+module.exports = { getPool, getAdminPool, execSP, execSPAdmin, querySP, querySQL, queryAdminSQL, sql, configs };

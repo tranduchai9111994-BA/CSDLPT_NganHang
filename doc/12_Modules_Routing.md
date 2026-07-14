@@ -15,6 +15,8 @@ Tất cả các chức năng nghiệp vụ được tách ra thành từng file 
 - Các route ghi (`GET/POST /them`, `GET/POST /sua`, `POST /xoa`) được bảo vệ bởi middleware `requireChiNhanh` — NganHang bị chặn HTTP 403 ngay tại route, không chỉ ở tầng UI.
 - Gọi SP `sp_ThemKhachHang` để thêm mới.
 - **Form thêm mới (views/khachhang/form.ejs):** Thứ tự trường được tối ưu — Họ/Tên → Địa chỉ → Giới tính/Ngày cấp → SĐT → CMND/Mã PIN (ở dưới cùng). CMND để trống không có placeholder tránh browser autocomplete nhầm. Ô Mã PIN có nút mắt 👁 để hiện/ẩn ký tự. Toàn form dùng `autocomplete="off"`.
+  - **[Fix 14/07/2026]** Icon 👁 tùy chỉnh bị icon "hiện mật khẩu" mặc định của Edge đè lên (tự hiện/ẩn theo hành vi trình duyệt, gây cảm giác "chớp tắt"). Thêm CSS `::-ms-reveal, ::-ms-clear { display: none; }` (class `.no-native-reveal`) để tắt icon mặc định, áp dụng ở cả `khachhang/form.ejs` và `taotaikhoan.ejs`.
+- **[Fix 14/07/2026]** Bảng "Danh sách khách hàng" (`khachhang/list.ejs`) thiếu cột **Giới tính** dù form Thêm/Sửa đã có field này — route không `SELECT` cột `PHAI`. Đã bổ sung `RTRIM(PHAI) AS PHAI` vào cả 2 nhánh query (NganHang/ChiNhanh) và thêm cột vào view.
 
 ## 3. `nhanvien.js` (Quản lý Nhân Viên)
 - **NganHang**: Chỉ xem danh sách toàn hệ thống — gọi `querySP(req, 'TRACUU', 'sp_DanhSachNhanVien', {})` — SP chạy trên TRACUU đọc NhanVien qua LINK1+LINK2 (TRACUU không có NhanVien local). **Không** thêm/sửa/xóa/chuyển CN/phục hồi.

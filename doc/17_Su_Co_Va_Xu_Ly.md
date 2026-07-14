@@ -443,3 +443,61 @@ Thêm vào đó, dữ liệu demo trên SQL1 và SQL2 dùng **CMND trùng nhau**
 
 **Bài học rút ra:**
 > Khi chạy migration data trên Publisher, cần kiểm tra Subscriber ngay sau đó. Nếu Replication chậm hoặc có conflict, cần can thiệp thủ công trên Subscriber. Dữ liệu demo không nên dùng CMND trùng cho các nhân viên khác nhau ở các chi nhánh.
+
+---
+
+## Sự cố 12: Thông báo lỗi tiếng Việt bị lỗi font (mojibake) khi rút/gửi/chuyển tiền [14/07/2026]
+
+**Triệu chứng:**
+```
+Msg 50000, Level 16, State 1, Server ES-HAITD16\SQL1, Procedure sp_RutTien, Line 85
+S? du kh?ng d? d? r?t.
+```
+Thay vì hiển thị đúng "Số dư không đủ để rút." — mọi ký tự có dấu bị thay bằng `?`.
+
+**Nguyên nhân gốc rễ:**
+Các giao dịch dùng `BEGIN DISTRIBUTED TRANSACTION` (gửi/rút/chuyển tiền, mở TK...) phải gọi qua `sqlcmd` thay vì driver `mssql`/tedious (xem Sự cố 4). Nhưng `sqlcmd`, khi xuất kết quả ra **stdout/stderr** (pipe mà Node.js `execFile` đọc), mặc định dùng **bảng mã OEM của Windows console** (codepage 437/850) — không có ký tự tiếng Việt có dấu, nên tự thay bằng `?`. Chỉ khi `sqlcmd` ghi ra **file** (`-o <file>`) kèm cờ `-f 65001` (UTF-8) thì output mới đúng — đây là hành vi đặc thù, không áp dụng khi output đi qua stdout/pipe.
+
+**Cách xử lý đã áp dụng:**
+Sửa hàm `execSPAdmin` trong [`db.js`](../APP_NGANHANG/db.js): thay vì đọc trực tiếp `stdout`/`stderr` của `execFile`, cho `sqlcmd` ghi ra file tạm (`-o <tempfile> -f 65001`), sau đó Node đọc lại file đó bằng `fs.readFileSync(..., 'utf8')`, bỏ BOM, rồi xóa file tạm. Đồng thời lọc bỏ dòng header kỹ thuật `Msg ###, Level ##, State ##, Server ..., Procedure ..., Line ##` mà `sqlcmd` tự thêm vào trước nội dung `RAISERROR` thật, chỉ giữ lại câu thông báo gốc.
+
+**Bài học rút ra:**
+> Khi bọc `sqlcmd` bằng `child_process.execFile` trong Node.js để hỗ trợ MSDTC, không được tin vào `stdout`/`stderr` cho dữ liệu Unicode — phải ép output ra file UTF-8 (`-o file -f 65001`) rồi đọc lại file. Áp dụng cho MỌI lời gọi `sqlcmd` xử lý text tiếng Việt, không riêng gì thông báo lỗi.
+
+---
+
+## Sự cố 13: Chạy lại script phân quyền làm mất toàn bộ đăng nhập hệ thống [14/07/2026]
+
+**Triệu chứng:**
+Sau khi chạy lại `sql/setup/04_Role_PhanQuyen.sql` để thu hẹp quyền `KhachHang` (fix TC-09a — xem ghi chú trong `11_Security_Authorization.md`), **không ai đăng nhập được nữa** — kể cả `admin`, `BT001`, các Login KhachHang. Lỗi cụ thể: `The EXECUTE permission was denied on the object 'sp_Login_App'`.
+
+**Nguyên nhân gốc rễ:**
+Bản cũ của script dùng `DROP ROLE` + `CREATE ROLE` để "làm sạch" quyền trước khi cấp lại. `DROP ROLE` trong SQL Server xóa **toàn bộ member** của role (phải `sp_droprolemember` hết mới DROP được) — role tạo lại sau đó là role **rỗng**, không tự động gán lại user nào. Toàn bộ user (đã tồn tại như database principal, không bị mất) chỉ đơn giản **rớt khỏi mọi role**, mất hết quyền kể cả quyền `EXECUTE sp_Login_App` cần cho bước đăng nhập.
+
+Sự cố còn lộ ra 1 lỗ hổng khác: file script chạy trên **SQL3 (TRACUU)** bị dừng giữa chừng (do lỗi `GRANT ... ON GD_CHUYENTIEN` — bảng này không tồn tại local trên TRACUU) → 2 phần cấp quyền còn lại (`NganHang`, `KhachHang`) **chưa từng chạy được trên SQL3**, để lại role rỗng hoàn toàn trên server này.
+
+**Cách xử lý đã áp dụng:**
+1. Khôi phục lại role member trên cả 4 server bằng `sp_addrolemember`, map theo quy ước đặt tên (`admin`→NganHang, `BT*/TD*/NV*`→ChiNhanh, còn lại dạng số/CMND→KhachHang) — đối chiếu với `sql/setup/09/10/11_TaoTaiKhoan*.sql` để xác nhận đúng quy ước.
+2. Chạy bù 2 đoạn GRANT còn thiếu (`NganHang`, `KhachHang`) riêng trên SQL3.
+3. Viết lại toàn bộ `04_Role_PhanQuyen.sql` theo hướng an toàn — xem chi tiết ở `11_Security_Authorization.md` mục 3b (không `DROP ROLE`, `REVOKE` động thay vì tái tạo, `IF OBJECT_ID` guard cho từng GRANT theo bảng).
+
+**Bài học rút ra (rất quan trọng — tự nhắc bản thân khi vấn đáp):**
+> `DROP ROLE`/`CREATE ROLE` không phải cách an toàn để "reset quyền" — nó xóa cả **membership**, không chỉ **permission**. Muốn reset sạch quyền của 1 role mà giữ nguyên user đang thuộc role đó, phải `REVOKE` từng quyền (hoặc REVOKE động qua `sys.database_permissions`), không được DROP/CREATE lại principal. Ngoài ra: khi 1 script T-SQL nhiều batch (`GO`) chạy qua `sqlcmd -b`, lỗi ở 1 batch có thể khiến các batch sau **không chạy** — luôn kiểm tra kết quả trên TẤT CẢ server sau khi deploy, không giả định script chạy trọn vẹn chỉ vì không thấy lỗi ở lần check đầu.
+
+---
+
+## Sự cố 14: `Invalid object name 'TaiKhoan'` khi NganHang xem sao kê 1 tài khoản cụ thể [14/07/2026]
+
+**Triệu chứng:**
+Đăng nhập `admin` (role `NganHang`) → Sao kê GD → chọn 1 số tài khoản cụ thể (VD `BT0000001`) → báo lỗi `Invalid object name 'TaiKhoan'`. Chọn "Tất cả tài khoản" thì không lỗi.
+
+**Nguyên nhân gốc rễ:**
+`NganHang` luôn có `effectiveServer = 'TRACUU'` (xem `auth.js`). Route `baocao.js` khi có chọn `SOTK` sẽ gọi `SP_SaoKeTaiKhoan` trên `server` (tức TRACUU cho NganHang). Nhưng `SP_SaoKeTaiKhoan` ([`06_SP_SaoKeTaiKhoan.sql`](../sql/stored_procedures/06_SP_SaoKeTaiKhoan.sql)) được thiết kế **chỉ chạy trên chi nhánh (SQL1/SQL2)** — đọc `TaiKhoan`, `GD_GOIRUT`, `GD_CHUYENTIEN` **local** (chỉ dùng LINK1 để lấy GD của chi nhánh đối tác). TRACUU không có local các bảng này (theo đúng kiến trúc phân tán) → SP crash ngay dòng `FROM TaiKhoan`.
+
+Nhánh "Tất cả tài khoản" không lỗi vì nó gọi `sp_SaoKeToanBo` — SP khác, được thiết kế riêng để chạy trên TRACUU (đọc qua LINK1+LINK2).
+
+**Cách xử lý đã áp dụng:**
+Sửa route `baocao.js`: khi `server === 'TRACUU'` và có chọn `SOTK`, mượn tạm `spServer = 'BENTHANH'` để gọi `SP_SaoKeTaiKhoan` thay vì gọi trên TRACUU. Vẫn ra đủ dữ liệu vì `TaiKhoan` nhân bản toàn vẹn giữa SQL1/SQL2, còn GD thì SP tự đọc Local + LINK1 nên tài khoản thuộc chi nhánh nào cũng lấy đủ lịch sử.
+
+**Bài học rút ra:**
+> Một SP được thiết kế cho 1 nhóm site cụ thể (ở đây là "chi nhánh có local TaiKhoan/GD") không thể gọi mù quáng bằng biến `server` chung của session — phải xác định đúng server phù hợp với giả định của SP đó, đặc biệt với role `NganHang` luôn có `effectiveServer` khác với các role còn lại.

@@ -689,6 +689,10 @@ Xác nhận các Job tự động hóa Replication đang chạy đúng (thực h
 - **SQL Agent Job và Replication liên quan thế nào?** → Mỗi Publication tự tạo các Job: Snapshot Agent (tạo snapshot ban đầu), Merge Agent (đồng bộ định kỳ). Job fail → replication dừng, dữ liệu lạc hậu.
 - **"No data changes processed" có phải lỗi không?** → Không — nghĩa là không có thay đổi cần sync trong chu kỳ đó, replication hoạt động bình thường.
 
+> **Lưu ý khi demo 13d — bấm Start Job báo "Error" ngay lập tức:**
+> SQL Server Agent chỉ cho phép **1 instance của 1 job chạy tại 1 thời điểm**. Nếu job đang chạy (Continuous/Executing) mà bấm **Start** lần nữa → Agent từ chối ngay với lỗi "Start Job ... Error / request refused because the job is already running" (dialog "Start Jobs" báo đỏ, 0 Success) — **đây là hành vi bình thường, không phải lỗi hệ thống hay lỗi replication**.
+> Cách xử lý: bấm **Stop** job trước (đưa job về trạng thái Idle) → rồi bấm **Start** lại → chạy thành công bình thường. Nếu giảng viên/hội đồng lỡ bấm Start khi job đang chạy, giải thích đúng nguyên nhân này thay vì lúng túng.
+
 ---
 
 ## TC-14: Khách hàng mở tài khoản ở nhiều chi nhánh (qua giao diện)

@@ -60,7 +60,8 @@
           <div style="position:relative;">
             <input type="password" id="macpin-input" name="MACPIN" maxlength="10" required
                    autocomplete="new-password" placeholder=""
-                   style="width:100%;padding-right:36px;box-sizing:border-box;">
+                   style="width:100%;padding-right:36px;box-sizing:border-box;"
+                   class="no-native-reveal">
             <button type="button" onclick="togglePin()" title="Hiện/ẩn mật khẩu"
                     style="position:absolute;right:8px;top:50%;transform:translateY(-50%);
                            background:none;border:none;cursor:pointer;padding:0;color:#555;font-size:16px;">
@@ -83,6 +84,13 @@
   </form>
 </div>
 
+<style>
+/* Tắt icon "hiện mật khẩu" mặc định của trình duyệt (Edge/IE) — tránh đè lên nút mắt tùy chỉnh */
+.no-native-reveal::-ms-reveal,
+.no-native-reveal::-ms-clear {
+  display: none;
+}
+</style>
 <script>
 function togglePin() {
   const input = document.getElementById('macpin-input');

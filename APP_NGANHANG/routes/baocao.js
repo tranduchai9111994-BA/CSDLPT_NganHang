@@ -67,20 +67,21 @@ router.post('/saoke', async (req, res) => {
 
     if (SOTK) {
       // Có chọn TK: dùng SP để có số dư đầu/cuối kỳ chính xác
+      // SP_SaoKeTaiKhoan chỉ chạy được trên chi nhánh (SQL1/SQL2) — TRACUU không có local TaiKhoan/GD_GOIRUT/GD_CHUYENTIEN.
+      // NganHang (server=TRACUU) mượn tạm BENTHANH để gọi SP: TaiKhoan nhân bản toàn vẹn + GD đọc Local+LINK1 nên vẫn đủ dữ liệu dù TK thuộc chi nhánh nào.
+      const spServer = server === 'TRACUU' ? 'BENTHANH' : server;
+
       let sodu_hientai;
       if (user.NHOM === 'KhachHang') {
         // SODU đã có trong myTKList (không cần thêm query)
         const tkInfo = myTKList.find(tk => tk.SOTK.trim() === SOTK.trim());
         sodu_hientai = tkInfo ? tkInfo.SODU : 0;
       } else {
-        const tkSQL = server === 'TRACUU'
-          ? `SELECT SODU FROM [LINK1].NGANHANG.dbo.TaiKhoan WHERE RTRIM(SOTK)=@sotk`
-          : `SELECT SODU FROM TaiKhoan WHERE RTRIM(SOTK)=@sotk`;
-        const tkInfo = await querySQL(req, server, tkSQL, { sotk: SOTK });
+        const tkInfo = await querySQL(req, spServer, `SELECT SODU FROM TaiKhoan WHERE RTRIM(SOTK)=@sotk`, { sotk: SOTK });
         sodu_hientai = tkInfo.length > 0 ? tkInfo[0].SODU : 0;
       }
 
-      const allGD = await querySP(req, server, 'SP_SaoKeTaiKhoan', { SOTK, TUNGAY, DENNGAY });
+      const allGD = await querySP(req, spServer, 'SP_SaoKeTaiKhoan', { SOTK, TUNGAY, DENNGAY });
 
       let sodu_dau = sodu_hientai, sodu_cuoi = sodu_hientai;
       if (allGD.length > 0) {

@@ -25,7 +25,7 @@ router.get('/', async (req, res) => {
       rows = await querySQL(req, 'TRACUU', `
         SELECT RTRIM(CMND) AS CMND,
                RTRIM(HO) + ' ' + RTRIM(TEN) AS HoTen,
-               RTRIM(MACN) AS MACN, SODT, DIACHI
+               RTRIM(MACN) AS MACN, SODT, DIACHI, RTRIM(PHAI) AS PHAI
         FROM KhachHang
         ORDER BY MACN, HO, TEN
       `);
@@ -34,7 +34,7 @@ router.get('/', async (req, res) => {
       rows = await querySQL(req, server, `
         SELECT RTRIM(CMND) AS CMND,
                RTRIM(HO) + ' ' + RTRIM(TEN) AS HoTen,
-               RTRIM(MACN) AS MACN, SODT, DIACHI
+               RTRIM(MACN) AS MACN, SODT, DIACHI, RTRIM(PHAI) AS PHAI
         FROM KhachHang
         WHERE RTRIM(MACN) = @macn
         ORDER BY HO, TEN

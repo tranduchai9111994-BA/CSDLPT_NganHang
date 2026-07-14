@@ -1,3 +1,10 @@
+<style>
+/* Tắt icon "hiện mật khẩu" mặc định của trình duyệt (Edge/IE) — tránh đè lên icon con mắt tùy chỉnh */
+.no-native-reveal::-ms-reveal,
+.no-native-reveal::-ms-clear {
+  display: none;
+}
+</style>
 <h1><span style="font-size:24px; vertical-align:middle;">🔐</span> Tạo Tài Khoản (Login)</h1>
 
 <% if (error) { %>
@@ -39,7 +46,7 @@
                 <div style="margin-bottom: 15px;">
                     <label style="font-weight: bold; display: block; margin-bottom: 5px;">Mật khẩu (Password)</label>
                     <div style="position: relative;">
-                        <input type="password" id="pwdNV" style="width: 100%; padding: 8px 36px 8px 12px; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box;" name="Password" placeholder="Nhập mật khẩu" required>
+                        <input type="password" id="pwdNV" class="no-native-reveal" style="width: 100%; padding: 8px 36px 8px 12px; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box;" name="Password" placeholder="Nhập mật khẩu" required>
                         <i class="fas fa-eye" id="eyeNV" onclick="toggleFormPwd('pwdNV','eyeNV')" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); cursor:pointer; color:#6c757d;"></i>
                     </div>
                 </div>
@@ -92,7 +99,7 @@
                 <div style="margin-bottom: 15px;">
                     <label style="font-weight: bold; display: block; margin-bottom: 5px;">Mật khẩu (Mã PIN)</label>
                     <div style="position: relative;">
-                        <input type="password" id="pwdKH" style="width: 100%; padding: 8px 36px 8px 12px; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box;" name="Password" placeholder="Nhập mã PIN 6 số..." required>
+                        <input type="password" id="pwdKH" class="no-native-reveal" style="width: 100%; padding: 8px 36px 8px 12px; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box;" name="Password" placeholder="Nhập mã PIN 6 số..." required>
                         <i class="fas fa-eye" id="eyeKH" onclick="toggleFormPwd('pwdKH','eyeKH')" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); cursor:pointer; color:#6c757d;"></i>
                     </div>
                 </div>

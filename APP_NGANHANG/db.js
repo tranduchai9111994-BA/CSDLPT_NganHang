@@ -1,6 +1,10 @@
 // db.js
 const sql = require('mssql');
 const { execFile } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
 
 // Cấu hình mặc định - kết nối NGANHANG1 (BENTHANH)
 const configs = {
@@ -181,6 +185,11 @@ async function execSPAdmin(serverKey, spName, params = {}) {
   const vArgs = Object.entries(params)
     .flatMap(([k, v]) => ['-v', `${k}=${String(v).replace(/'/g, "''")}`]);
 
+  // sqlcmd mã hóa output ra stdout/stderr theo OEM codepage (mất dấu tiếng Việt).
+  // Ghi ra file qua -o kèm -f 65001 thì sqlcmd xuất UTF-8 đúng — đọc lại file đó
+  // để lấy thông báo lỗi/kết quả không bị lỗi font.
+  const outFile = path.join(os.tmpdir(), `sqlcmd_${crypto.randomBytes(8).toString('hex')}.txt`);
+
   return new Promise((resolve, reject) => {
     execFile('sqlcmd', [
       '-S', serverAddr,
@@ -189,13 +198,23 @@ async function execSPAdmin(serverKey, spName, params = {}) {
       '-P', '123',
       ...vArgs,
       '-Q', query,
-      '-b'   // exit với error code nếu SQL lỗi
-    ], (error, stdout, stderr) => {
+      '-b',            // exit với error code nếu SQL lỗi
+      '-o', outFile,   // ghi output ra file UTF-8
+      '-f', '65001'
+    ], (error) => {
+      let output = '';
+      try {
+        output = fs.readFileSync(outFile, 'utf8').replace(/^﻿/, '');
+        // Bỏ dòng header kỹ thuật "Msg ###, Level ##, State ##, Server ..., Procedure ..., Line ##"
+        // do sqlcmd tự thêm vào — chỉ giữ lại nội dung RAISERROR thật.
+        output = output.replace(/^Msg \d+, Level \d+, State \d+.*$/gm, '').trim();
+      } catch (_) {}
+      try { fs.unlinkSync(outFile); } catch (_) {}
+
       if (error) {
-        const msg = stderr || stdout || error.message;
-        return reject(new Error(msg.trim()));
+        return reject(new Error(output || error.message));
       }
-      resolve(stdout);
+      resolve(output);
     });
   });
 }

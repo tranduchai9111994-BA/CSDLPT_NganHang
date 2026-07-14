@@ -13,7 +13,8 @@ function getServer(req) { return req.session.user.SERVER || 'BENTHANH'; }
 router.get('/goirut', async (req, res) => {
   await renderGoiRut(req, res, {
     error: req.query.error || null,
-    success: req.query.success || null
+    success: req.query.success || null,
+    activeTab: req.query.tab || 'gui'
   });
 });
 
@@ -57,7 +58,7 @@ router.post('/ruttien', async (req, res) => {
     await execSPAdmin(server, 'sp_RutTien', {
       SOTK: SOTK.trim(), SOTIEN: parseFloat(SOTIEN), MANV: user.MANV
     });
-    res.redirect('/giaodich/goirut?success=Rút tiền thành công! Số tiền: ' + Number(SOTIEN).toLocaleString('vi-VN') + ' VNĐ');
+    res.redirect('/giaodich/goirut?tab=rut&success=Rút tiền thành công! Số tiền: ' + Number(SOTIEN).toLocaleString('vi-VN') + ' VNĐ');
   } catch (err) {
     await renderGoiRut(req, res, { error: err.message, activeTab: 'rut', prevSOTK: SOTK, prevSOTIEN: SOTIEN });
   }

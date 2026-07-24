@@ -1,60 +1,81 @@
-# 🧩 Chi Tiết Các Module Nghiệp Vụ (Routes)
+# Chi Tiết Các Module Nghiệp Vụ (Routes)
 
-Tất cả các chức năng nghiệp vụ được tách ra thành từng file riêng trong thư mục `routes/` để dễ bảo trì.
+Toàn bộ chức năng được tách theo module trong `APP_NGANHANG/routes/`. Mỗi file phụ trách 1 lĩnh vực, mount vào `app.js` kèm middleware phân quyền tương ứng.
 
-> 📌 **Liên quan phân tán:** Một số module (`taikhoan.js` tổng hợp TK cho NganHang, `baocao.js` sao kê không chọn TK, fan-out cấp Login trong `quantri.js`/`khachhang.js`) đang xử lý **tổng hợp/điều phối xuyên mảnh tại tầng Node** thay vì bằng SP + Linked Server. Đánh giá chi tiết và khuyến nghị: [`18_DanhGia_CoChePhanTan.md`](18_DanhGia_CoChePhanTan.md) mục #4.
+---
 
-## 1. `auth.js` (Xác thực)
-- Xử lý đăng nhập. Xác định user thuộc nhóm nào bằng cách truy vấn View hệ thống (`sys.database_role_members`) hoặc kiểm tra tài khoản NV/KH.
-- Gọi SP `sp_Login_App`.
-- Gán thông tin (MANV, HOTEN, NHOM, MACN, SERVER) vào `req.session.user`.
+## 1. `auth.js` — Xác Thực
 
-## 2. `khachhang.js` (Quản lý Khách Hàng)
-- **NganHang**: Chỉ xem danh sách toàn hệ thống (query `TRACUU`). **Không** thêm/sửa/xóa.
-- **ChiNhanh**: Toàn quyền CRUD — xem/thêm/sửa/xóa khách hàng trong chi nhánh mình (query server cục bộ).
-- Các route ghi (`GET/POST /them`, `GET/POST /sua`, `POST /xoa`) được bảo vệ bởi middleware `requireChiNhanh` — NganHang bị chặn HTTP 403 ngay tại route, không chỉ ở tầng UI.
-- Gọi SP `sp_ThemKhachHang` để thêm mới.
-- **Form thêm mới (views/khachhang/form.ejs):** Thứ tự trường được tối ưu — Họ/Tên → Địa chỉ → Giới tính/Ngày cấp → SĐT → CMND/Mã PIN (ở dưới cùng). CMND để trống không có placeholder tránh browser autocomplete nhầm. Ô Mã PIN có nút mắt 👁 để hiện/ẩn ký tự. Toàn form dùng `autocomplete="off"`.
-  - **[Fix 14/07/2026]** Icon 👁 tùy chỉnh bị icon "hiện mật khẩu" mặc định của Edge đè lên (tự hiện/ẩn theo hành vi trình duyệt, gây cảm giác "chớp tắt"). Thêm CSS `::-ms-reveal, ::-ms-clear { display: none; }` (class `.no-native-reveal`) để tắt icon mặc định, áp dụng ở cả `khachhang/form.ejs` và `taotaikhoan.ejs`.
-- **[Fix 14/07/2026]** Bảng "Danh sách khách hàng" (`khachhang/list.ejs`) thiếu cột **Giới tính** dù form Thêm/Sửa đã có field này — route không `SELECT` cột `PHAI`. Đã bổ sung `RTRIM(PHAI) AS PHAI` vào cả 2 nhánh query (NganHang/ChiNhanh) và thêm cột vào view.
+- **Đăng nhập bằng SQL Authentication**: nhận `LoginName + Password`, mở connection pool bằng chính SQL Login đó.
+- Sau khi kết nối thành công → gọi `sp_Login_App(@LoginName)` để lấy `MANV, HOTEN, NHOM, MACN`.
+- Gán vào `req.session.user` (bao gồm cả `PASSWORD` để tái tạo pool khi cần), sau đó `res.locals.user` inject vào mọi view.
+- `NHOM='NganHang'` → `effectiveServer = 'TRACUU'` bất kể user chọn gì trên dropdown.
 
-## 3. `nhanvien.js` (Quản lý Nhân Viên)
-- **NganHang**: Chỉ xem danh sách toàn hệ thống — gọi `querySP(req, 'TRACUU', 'sp_DanhSachNhanVien', {})` — SP chạy trên TRACUU đọc NhanVien qua LINK1+LINK2 (TRACUU không có NhanVien local). **Không** thêm/sửa/xóa/chuyển CN/phục hồi.
-- **ChiNhanh**: Toàn quyền — thêm/sửa/xóa/chuyển chi nhánh/phục hồi nhân viên trong chi nhánh mình.
-- Tất cả route ghi (`/them`, `/sua`, `/xoa`, `/chuyen`, `/phuchoi`) được bảo vệ bởi middleware `requireChiNhanh`.
-- **Tính năng Thêm Mới:** Tự động sinh Mã Nhân Viên (`MANV`) theo định dạng chi nhánh — prefix `BT` cho BENTHANH (`BT001`, `BT002`...), prefix `TD` cho TANDINH (`TD001`, `TD002`...). Đảm bảo không trùng khi chuyển nhân viên qua lại giữa 2 chi nhánh. Hàm `sinhMANV()` query `TOP 1 MANV LIKE prefix%` rồi tăng số thứ tự.
-- Có thêm tính năng **Chuyển Chi Nhánh**: gọi SP `sp_ChuyenNhanVien(@MANV, @MACN_MOI)` để chuyển dữ liệu nhân viên từ phân mảnh này sang phân mảnh khác qua Linked Server (sử dụng `sqlcmd` qua hàm `execSPAdmin` do hạn chế của driver Node.js với Distributed Transaction).
-- Có thêm tính năng **Phục hồi**: Cho phép khôi phục lại nhân viên đã xóa/nghỉ việc (`TrangThaiXoa = 0`).
+## 2. `khachhang.js` — Quản Lý Khách Hàng
 
-## 4. `taikhoan.js` (Mở Tài Khoản)
-- **NganHang**: Chỉ xem danh sách toàn hệ thống (gộp qua SP `sp_DanhSachTaiKhoan` trên TRACUU). **Không** mở hoặc xóa tài khoản.
-- **ChiNhanh**: Xem **tất cả TK** (TaiKhoan nhân bản toàn vẹn, không filter theo MACN) + mở TK mới + xóa TK (khi SODU=0 và không có GD). KhachHang phân mảnh ngang → dùng `queryAdminSQL()` + LINK1 để hiển thị tên KH cả 2 chi nhánh (có retry tự động khi pool lỗi).
-- Route `GET/POST /mo` (mở TK) và `POST /dong` (xóa TK) được bảo vệ bởi `requireChiNhanh` — NganHang bị chặn HTTP 403.
-- **Mở TK cross-branch:** Form hiển thị KH từ cả 2 chi nhánh (nhóm theo optgroup). Khi KH thuộc chi nhánh khác → `MACN = chi nhánh KH`, `SOTK` prefix theo **chi nhánh NV** (để phân biệt TK mở cross-branch), INSERT chạy trên server có KH (via `execSPAdmin`) để thỏa FK_TaiKhoan_KhachHang + FK_TaiKhoan_ChiNhanh. TK replicate full sang server đối tác.
-- Tự động sinh `SOTK` theo prefix chi nhánh (BT/TD) + số tự tăng 7 chữ số.
-- Gọi SP `sp_MoTaiKhoan` — **luôn qua `execSPAdmin` (sqlcmd)** vì SP dùng `BEGIN DISTRIBUTED TRANSACTION` (tedious driver không hỗ trợ MSDTC). Logic check KH trong SP tách LINK1 query trước distributed tran để tránh conflict với merge trigger (xem [Sự cố 11](17_Su_Co_Va_Xu_Ly.md#sự-cố-11)).
+- **NganHang**: chỉ xem toàn hệ thống (query trên TRACUU vì `KhachHang` replicate full ở đó). **Không** thêm/sửa/xóa.
+- **ChiNhanh**: CRUD trong chi nhánh mình. Các route ghi (`GET/POST /them`, `GET/POST /sua`, `POST /xoa`) bọc `requireChiNhanh` → NganHang bị HTTP 403.
+- Route `POST /them` gọi SP `sp_ThemKhachHang` để INSERT + fan-out `SP_TaoTaiKhoan` (tạo SQL Login KH mới trên cả 3 site).
+- Form `views/khachhang/form.ejs` dùng `autocomplete="off"`, `::-ms-reveal { display:none }` để tắt nút "hiện mật khẩu" mặc định của Edge/Chrome khỏi field Mã PIN. Toggle 👁 riêng cho phép user chủ động hiện/ẩn.
+- Danh sách hiển thị cả cột `PHAI` (Giới tính) — SELECT có `RTRIM(PHAI) AS PHAI`.
 
-## 5. `giaodich.js` (Gửi / Rút / Chuyển tiền)
-- Cung cấp form giao dịch. Giao diện Gửi/Rút tiền được nâng cấp thiết kế **Tabs đa năng** (Chuyển đổi giữa Gửi và Rút trên cùng 1 trang), tự động hiển thị số dư trực quan với màu sắc tương ứng.
-- Dropdown hiển thị **tất cả TK** (TaiKhoan nhân bản toàn vẹn, không filter theo MACN) kèm `[MACN]` để phân biệt chi nhánh. NV có thể thực hiện giao dịch cho TK thuộc chi nhánh khác.
-- **SP luôn chạy trên server NV** (local) — đảm bảo GD_GOIRUT/GD_CHUYENTIEN ghi đúng mảnh (phân mảnh theo NV). Nếu TK thuộc chi nhánh khác, SP tự UPDATE TK qua LINK1 (Distributed Transaction).
-- Gọi SP `sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien` — cả 3 đều có logic kiểm tra MACN TK vs MACN NV và dùng LINK1 khi cần. **Luôn gọi qua `execSPAdmin` (sqlcmd)** vì cả 3 SP đều dùng `BEGIN DISTRIBUTED TRANSACTION` (tedious driver không hỗ trợ MSDTC).
+## 3. `nhanvien.js` — Quản Lý Nhân Viên
 
-## 6. `baocao.js` (Thống kê, Sao kê)
-- **Cập nhật Logic Sao Kê Tài Khoản:** Trình bày dữ liệu trả về trực tiếp từ SP_SaoKeTaiKhoan. Toàn bộ logic tính số dư lũy kế đã được đẩy xuống tầng SQL Server xử lý.
-- **Liệt kê:**
-  - `GET /baocao/lietke?loai=tk`: Query lấy danh sách tài khoản, kết nối `KhachHang`. **ORDER BY tk.NGAYMOTK DESC**.
-  - `GET /baocao/lietke?loai=kh`: Trả về danh sách khách hàng. **ORDER BY MACN, TEN, HO**.
-  - Không cần SP vì thao tác lấy danh sách trực tiếp khá nhẹ và ít cần xử lý giao dịch ACID.
-- **Tìm kiếm (search):** Form liệt kê KH hỗ trợ tham số `?search=` — lọc theo tên hoặc CMND với `LIKE %keyword%` trên cả 2 cột `HO+TEN` và `CMND`. Áp dụng cho cả nhóm `NganHang` và `ChiNhanh`.
+- **NganHang**: chỉ xem — gọi `querySP(req, 'TRACUU', 'sp_DanhSachNhanVien')` (SP đọc `NhanVien` qua LINK1+LINK2 vì TRACUU không có bảng này local).
+- **ChiNhanh**: toàn quyền CRUD + chuyển chi nhánh + phục hồi. Tất cả route ghi bọc `requireChiNhanh`.
+- **Sinh MANV mới**: prefix `BT` cho BENTHANH, `TD` cho TANDINH. Hàm `sinhMANV()` query `TOP 1 MANV LIKE 'BT%'` hoặc `LIKE 'TD%'` rồi tăng 1. Đảm bảo duy nhất toàn cục kể cả khi chuyển NV qua lại.
+- **Chuyển chi nhánh** (`/chuyen`): gọi `sp_ChuyenNhanVien` qua **`execSPAdmin` (sqlcmd)** vì SP dùng `BEGIN DISTRIBUTED TRANSACTION`.
+- **Phục hồi** (`/phuchoi`): gọi `SP_PhucHoiNhanVien` qua `execSPAdmin` — đưa `TrangThaiXoa = 0`.
 
-## 7. `quantri.js` (Tạo Tài Khoản / Phân Quyền)
-- **Chức năng Tạo Tài Khoản (Login):** Giao diện đã được nâng cấp thành thiết kế 2 cột song song (Grid Layout / Flexbox) chuyên nghiệp, hiển thị trực quan cả 2 bảng.
-- Hỗ trợ công cụ tìm kiếm "search-as-you-type" để chọn trực tiếp Nhân viên hoặc Khách hàng khi có quá nhiều dữ liệu, thay cho Select dropdown thông thường. Trường "Nhóm quyền" (Role): NganHang thấy dropdown chọn (NganHang/ChiNhanh), ChiNhanh bị khóa cứng (chỉ tạo cùng nhóm hoặc KhachHang).
-- **Bảng Theo Dõi Trạng Thái Login:** Dưới form tạo tài khoản là bảng danh sách (Route `GET /quantri/login-management/list`). Bảng hiển thị thông tin những ai đã được cấp tài khoản, ai chưa. Có bộ lọc theo Loại, Trạng thái và tìm kiếm text.
-- **Xem / Đặt Lại Mật Khẩu (Chỉ dành cho NganHang):**
-  - Route `GET /quantri/login-management/password/:loginName`: trả về mật khẩu plain-text từ bảng `QuanTriLogin`.
-  - Route `POST /quantri/login-management/reset-password`: đặt lại mật khẩu về mặc định (`123456`) trên tất cả 3 server đồng thời.
-  - Route `POST /quantri/login-management/cleanup-sync-error`: dọn dẹp các tài khoản bị lỗi đồng bộ (có trên bảng phụ trợ nhưng Login thật đã mất).
-- **Đổi Nhóm Quyền (Chỉ dành cho NganHang):**
-  - Route `POST /quantri/login-management/change-role`: đổi nhóm quyền (NganHang ↔ ChiNhanh ↔ KhachHang) trên cả 3 server. Dùng `sp_droprolemember` xóa role cũ + `sp_addrolemember` gán role mới + UPDATE `QuanTriLogin`. Tài khoản `admin` hệ thống được bảo vệ cứng (403). Middleware `requireNganHang` chặn ChiNhanh/KhachHang gọi API.
+## 4. `taikhoan.js` — Mở / Đóng Tài Khoản
+
+- **NganHang**: chỉ xem danh sách toàn hệ thống qua SP `sp_DanhSachTaiKhoan` trên TRACUU (SP đọc `TaiKhoan` qua LINK1 — không UNION LINK2 vì TaiKhoan replicate full).
+- **ChiNhanh**: xem **tất cả TK** (do `TaiKhoan` replicate toàn vẹn giữa 2 chi nhánh) + mở TK + đóng TK. Danh sách KH để chọn ở form mở TK lấy từ 2 site bằng `queryAdminSQL` (dùng LINK1 để lấy KH bên đối tác) — có retry tự động khi pool lỗi.
+- Route `GET/POST /mo` và `POST /dong` bọc `requireChiNhanh`.
+- **Mở TK cross-branch**: form hiển thị KH của cả 2 chi nhánh (nhóm `<optgroup>`). Khi KH thuộc CN khác → `MACN = MACN của KH`, `SOTK` prefix theo **CN của NV thao tác** (dấu hiệu TK được mở cross-branch), INSERT chạy trên **server có KH** (via `execSPAdmin`) để thỏa `FK_TaiKhoan_KhachHang`.
+- Sinh `SOTK` tự động: `BT/TD` + 7 chữ số (`BT0000001`, `TD0000005`...).
+- SP `sp_MoTaiKhoan` **luôn gọi qua `execSPAdmin` (sqlcmd)** — SP dùng `BEGIN DISTRIBUTED TRANSACTION` sau khi đã tách check KH (LINK1) ra trước (chi tiết: [Sự cố 5 trong `17_Su_Co_Va_Xu_Ly.md`](17_Su_Co_Va_Xu_Ly.md)).
+
+## 5. `giaodich.js` — Gửi / Rút / Chuyển Tiền
+
+- Form Gửi/Rút thiết kế **Tabs đa năng** trên cùng 1 trang.
+- Dropdown TK hiển thị **tất cả TK toàn hệ thống** kèm `[MACN]` để phân biệt chi nhánh — do TaiKhoan nhân bản toàn vẹn.
+- **SP chạy trên server của NV thao tác** (local) → `GD_GOIRUT`/`GD_CHUYENTIEN` ghi đúng vào mảnh của CN đó (phân mảnh theo MANV). Nếu TK ở CN khác → SP tự UPDATE qua LINK1.
+- Cả `sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien` đều gọi qua **`execSPAdmin` (sqlcmd)** — dùng `BEGIN DISTRIBUTED TRANSACTION` để đảm bảo ACID cross-branch (kể cả khi cùng CN, cấu trúc SP thống nhất một pattern).
+- `sp_RutTien` / `sp_ChuyenTien` dùng atomic check-and-update `WHERE SOTK=@SOTK AND SODU>=@SOTIEN` → không cần lock rời, không có race condition.
+
+## 6. `baocao.js` — Thống Kê & Sao Kê
+
+- **Sao kê TK**: gọi `SP_SaoKeTaiKhoan` (chi nhánh) hoặc `sp_SaoKeToanBo` (TRACUU cho NganHang không chọn TK). Toàn bộ tính số dư đầu kỳ + số dư lũy kế xử lý dưới SQL Server bằng Window Function.
+- **Liệt kê TK**:
+  - NganHang → SP `sp_LietKeTaiKhoanTheoNgay` trên TRACUU (đọc `TaiKhoan` qua LINK1).
+  - ChiNhanh → raw SELECT local + LEFT JOIN `KhachHang` local, `WHERE MACN = user.MACN`.
+- **Liệt kê KH**:
+  - NganHang không chọn CN → raw SELECT trên TRACUU (có full `KhachHang`), `ORDER BY MACN, HO, TEN`.
+  - NganHang chọn CN cụ thể → raw SELECT trên site tương ứng.
+  - ChiNhanh → force `WHERE MACN = user.MACN`.
+- Tham số `?search=` lọc `CMND LIKE` hoặc `HO+' '+TEN LIKE` (áp dụng cho cả 2 nhóm).
+- **KhachHang** chỉ được xem sao kê **TK của chính mình**: route pre-fetch danh sách TK qua `sp_TaiKhoanKhachHang` (không raw SELECT), rồi double-check `SOTK` request có nằm trong danh sách.
+
+## 7. `quantri.js` — Cấp Tài Khoản & Phân Quyền
+
+- Chỉ mở cho `NganHang` (mount kèm `requireNganHang` ở `app.js` — thực tế route level cũng kiểm tra thêm).
+- **Tạo Tài Khoản** (`POST /quantri/tao-tai-khoan`): Grid 2 cột hiển thị NV + KH có sẵn để chọn. Tìm kiếm "search-as-you-type" nhanh.
+  - Gọi `SP_TaoTaiKhoan(@LoginName, @Password, @UserName, @Role)` qua **Admin Pool** — user thường không có `CREATE LOGIN`.
+  - Insert kèm bản ghi vào `QuanTriLogin` (lưu plain-text để reset về sau).
+- **Danh sách trạng thái Login** (`GET /quantri/login-management/list`): gọi `SP_DanhSachTrangThaiLogin` trên TRACUU — SP UNION `[LINK1] + [LINK2]` cho `NhanVien` + `KhachHang`, LEFT JOIN với `sys.server_principals` để biết ai đã có Login/chưa có.
+- **Xem / Reset mật khẩu**:
+  - `GET /quantri/login-management/password/:loginName` — trả về plain-text từ `QuanTriLogin` (chỉ NganHang).
+  - `POST /quantri/login-management/reset-password` — reset về `123456` trên cả 3 site (dùng `DROP LOGIN + CREATE LOGIN` → sau đó re-link `DB User` để tránh orphaned user).
+  - `POST /quantri/login-management/cleanup-sync-error` — dọn record trong `QuanTriLogin` mà không có Login thật (do lỗi sync giữa các site).
+- **Đổi nhóm quyền** (`POST /quantri/login-management/change-role`): dùng `sp_droprolemember` + `sp_addrolemember` trên cả 3 site. Login `admin` được bảo vệ cứng — luôn HTTP 403. UI cũng ẩn nút với dòng admin và với user không phải NganHang.
+
+---
+
+## Ghi Chú Về Xử Lý Xuyên Mảnh Ở Tầng Node
+
+Một số route điều phối xuyên mảnh **tại tầng Node** (thay vì bọc bằng SP + Linked Server):
+- `khachhang.js`, `quantri.js`: fan-out `CREATE LOGIN` sang BENTHANH + TANDINH + TRACUU khi tạo KH mới.
+- `baocao.js` (sao kê không chọn TK cho ChiNhanh): raw SELECT trên `GD_GOIRUT` + `GD_CHUYENTIEN` (không qua SP).
+
+Đây là lựa chọn có chủ đích để giảm số SP phải maintain — chấp nhận được vì các route này chỉ dùng bởi role có quyền đầy đủ tại DB (`ChiNhanh`/`NganHang`), không phải endpoint public. Đánh giá chi tiết ở [`18_DanhGia_CoChePhanTan.md`](18_DanhGia_CoChePhanTan.md).

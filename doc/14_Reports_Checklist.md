@@ -1,36 +1,85 @@
-# Đánh giá tiến độ - Yêu cầu "Liệt kê - Thống kê"
+# Checklist Báo Cáo — Đáp Ứng 3 Yêu Cầu Đề Bài
 
-Dựa trên yêu cầu của thầy giáo:
-> 1. Sao kê giao dịch của 1 tài khoản trong 1 khoảng thời gian (@tungay , @denngay).
-> 2. Liệt kê các tài khoản mở trong 1 khoảng thời gian của chi nhánh, của tất cả các chi nhánh.
-> 3. Liệt kê các khách hàng theo từng chi nhánh, trong từng chi nhánh thì in tăng dần theo họ tên.
+> **Đề bài (3 yêu cầu bắt buộc):**
+> 1. **Sao kê giao dịch** của 1 tài khoản trong 1 khoảng thời gian `[@TUNGAY, @DENNGAY]`.
+> 2. **Liệt kê tài khoản mở** trong 1 khoảng thời gian — của 1 chi nhánh / tất cả chi nhánh.
+> 3. **Liệt kê khách hàng** theo từng chi nhánh, trong từng chi nhánh in tăng dần theo họ tên.
 
-Sau khi rà soát toàn bộ source code NodeJS (`routes/baocao.js`) và Database (`06_SP_SaoKeTaiKhoan.sql`), đây là báo cáo tiến độ:
-
-## 1. Sao kê giao dịch tài khoản: ĐÃ HOÀN THÀNH (100%)
-- **Thực trạng code:** Hệ thống đã có file `06_SP_SaoKeTaiKhoan.sql` và route `POST /baocao/saoke`.
-- **Chức năng:** Nhận tham số `@SOTK`, `@TUNGAY`, `@DENNGAY`. 
-- **Độ chính xác:**
-  - Kết xuất chính xác format bảng 5 cột: Số dư đầu | Ngày | Loại giao dịch | Số tiền | Số dư sau.
-  - Toàn bộ việc tính số dư đầu kỳ và số dư lũy kế từng dòng (Số dư sau) được xử lý 100% dưới SQL Server thông qua Window Functions, đáp ứng tuyệt đối yêu cầu tính toán dưới CSDL. Tầng Node.js chỉ nhận dữ liệu và in ra giao diện.
-  - **Điều kiện lọc thông minh:** Hệ thống đã tự động gán `23:59:59` vào giá trị `DENNGAY` để đảm bảo báo cáo bao gồm toàn bộ các giao dịch diễn ra trong ngày kết thúc.
-  - Tự động khóa: Khách hàng chỉ được phép sao kê chính tài khoản của họ (hệ thống kiểm tra chủ sở hữu TK trước khi gọi SP), nhưng cho phép họ chọn giữa **nhiều tài khoản** của chính mình.
-
-## 2. Liệt kê tài khoản mở trong 1 khoảng thời gian: ĐÃ HOÀN THÀNH (100%)
-- **Thực trạng code:** Nằm tại route `GET /baocao/lietke?loai=tk`.
-- **Chức năng:** 
-  - Giao diện cho phép chọn từ ngày, đến ngày.
-  - **Nhóm NganHang:** Xem được tài khoản mở của *tất cả các chi nhánh* (chọn chi nhánh qua dropdown) bằng cách query vào mảnh `TRACUU`.
-  - **Nhóm ChiNhanh:** Code tự động khóa chặt, chỉ cho phép lọc và xem các tài khoản mở *tại chi nhánh hiện tại*.
-- **Độ chính xác:** Truy vấn kết nối bảng `TaiKhoan` và `KhachHang` để hiển thị đầy đủ SOTK, HoTen, SoDu, NgayMo, MaCN.
-
-## 3. Liệt kê khách hàng theo từng chi nhánh: ĐÃ HOÀN THÀNH (100%)
-- **Thực trạng code:** Nằm tại route `GET /baocao/lietke?loai=kh`.
-- **Chức năng:**
-  - **Nhóm NganHang:** Nếu không chọn chi nhánh cụ thể, code sẽ tự động query vào mảnh `TRACUU` với câu lệnh `ORDER BY MACN, HO, TEN`. (Đáp ứng chính xác yêu cầu: *Liệt kê theo từng chi nhánh, trong từng chi nhánh in tăng dần theo Họ Tên*).
-  - **Nhóm ChiNhanh:** Code tự động thêm điều kiện `WHERE MACN = @macn ORDER BY HO, TEN` để chỉ hiển thị khách của chi nhánh đó, tăng dần chuẩn xác.
+Cả 3 chức năng đã được implement, tích hợp menu **"Báo cáo"** trong `layout.ejs`. Chi tiết bên dưới.
 
 ---
 
-### Tổng Kết
-Chúc mừng bạn! Cả **3/3 báo cáo thống kê đều ĐÃ ĐƯỢC LẬP TRÌNH HOÀN TẤT** và tích hợp thẳng vào giao diện Web với độ bảo mật (chặn quyền NganHang/ChiNhanh) rất chặt chẽ. Bạn không cần code thêm bất cứ dòng nào cho 3 tính năng này nữa, chỉ cần mở App lên và bấm vào menu **"Báo cáo"** ở thanh bên trái (Sidebar) để trải nghiệm và chụp màn hình nộp báo cáo cho thầy!
+## Yêu Cầu 1 — Sao Kê Giao Dịch Tài Khoản
+
+**Route:** `GET/POST /baocao/saoke` (`routes/baocao.js`).
+**Views:** `views/baocao/saoke.ejs`.
+**SP chính:** `SP_SaoKeTaiKhoan` (bản chi nhánh, đọc local + LINK1).
+
+**Đầu ra:** bảng 5 cột — `Số dư đầu | Ngày | Loại GD | Số tiền | Số dư sau`.
+
+**Điểm phân tán:**
+- Tính **100% dưới SQL Server** bằng Window Function `SUM() OVER (ORDER BY NGAYGD ROWS UNBOUNDED PRECEDING)`. Node.js chỉ nhận dữ liệu và render.
+- Route tự thêm `23:59:59` vào `DENNGAY` để bao trọn ngày kết thúc.
+- **NganHang** (server=TRACUU) mượn tạm `spServer = 'BENTHANH'` để gọi `SP_SaoKeTaiKhoan` khi có chọn số TK cụ thể — vẫn đủ dữ liệu vì TaiKhoan replicate full + GD gộp Local+LINK1.
+- **NganHang không chọn TK** → gọi `sp_SaoKeToanBo` trên TRACUU (UNION ALL LINK1+LINK2 cho GD).
+- **KhachHang**:
+  - Pre-fetch danh sách TK của mình qua `sp_TaiKhoanKhachHang` (không raw SELECT vì KhachHang không có `GRANT SELECT` trên `TaiKhoan`).
+  - Server-side check: SOTK người gửi lên phải nằm trong danh sách của KH (chặn giả mạo).
+  - Nếu KH không chọn TK → gọi `SP_SaoKeTaiKhoan` cho từng TK rồi merge (thay vì raw SELECT bảng GD).
+
+**Phân quyền:**
+- `NganHang`: xem mọi TK.
+- `ChiNhanh`: xem mọi TK (nhờ TaiKhoan replicate full trên chi nhánh, SP tự đọc GD Local + LINK1 nên vẫn đủ).
+- `KhachHang`: chỉ xem TK của chính mình (double-check server-side).
+
+---
+
+## Yêu Cầu 2 — Liệt Kê Tài Khoản Mở Trong Khoảng Thời Gian
+
+**Route:** `GET /baocao/lietke?loai=tk` (`routes/baocao.js`).
+**Views:** `views/baocao/lietke.ejs`.
+**SP chính:** `sp_LietKeTaiKhoanTheoNgay` (bản TRACUU — dùng cho NganHang).
+
+**Đầu ra:** bảng — `SOTK | CMND | Họ Tên | Số Dư | Chi Nhánh | Ngày Mở TK`.
+
+**Điểm phân tán:**
+- **NganHang** (mọi chi nhánh): gọi `sp_LietKeTaiKhoanTheoNgay` trên TRACUU. SP đọc `[LINK1].NGANHANG.dbo.TaiKhoan` (chỉ LINK1, không UNION LINK2 vì TaiKhoan replicate full → tránh duplicate x2). `OUTER APPLY (SELECT TOP 1 ... FROM KhachHang WHERE CMND=tk.CMND)` để tránh nhân bản khi KH có nhiều row cùng CMND.
+- **ChiNhanh**: raw SELECT trực tiếp trên `TaiKhoan` local + LEFT JOIN `KhachHang` local, `WHERE MACN = user.MACN` → chỉ TK của chi nhánh mình.
+- Filter dropdown `macn` (chỉ hiện với NganHang), khoảng ngày `tungay`/`denngay`, search `CMND`/`HoTen`.
+
+**Phân quyền:**
+- `NganHang`: có dropdown chọn chi nhánh, có thể xem cả 2 CN.
+- `ChiNhanh`: khóa cứng theo `user.MACN`.
+- `KhachHang`: không được vào menu này (middleware chặn).
+
+---
+
+## Yêu Cầu 3 — Liệt Kê Khách Hàng Theo Chi Nhánh
+
+**Route:** `GET /baocao/lietke?loai=kh` (`routes/baocao.js`).
+**Views:** `views/baocao/lietke.ejs`.
+
+**Đầu ra:** bảng — `CMND | Họ Tên | Chi Nhánh | SĐT`.
+
+**Điểm phân tán:**
+- **NganHang không chọn chi nhánh**: raw SELECT trên TRACUU (KhachHang replicate full ở đó) — `ORDER BY MACN, HO, TEN` → đúng yêu cầu "theo từng chi nhánh, trong từng chi nhánh in tăng dần theo họ tên".
+- **NganHang chọn 1 chi nhánh cụ thể**: SELECT trên site tương ứng theo `WHERE MACN=@macn ORDER BY HO, TEN`.
+- **ChiNhanh**: force `WHERE MACN = user.MACN ORDER BY HO, TEN` — chỉ thấy KH của mình.
+- Search hỗ trợ `CMND LIKE @search OR HO+' '+TEN LIKE @search`.
+
+**Phân quyền:**
+- `NganHang`, `ChiNhanh`: xem theo phạm vi tương ứng.
+- `KhachHang`: chặn qua middleware `requireRole`.
+
+---
+
+## Kiểm Tra Nhanh Khi Demo
+
+| Bước | Hành động | Kết quả kỳ vọng |
+|---|---|---|
+| 1 | Login `admin/1` chọn TRACUU → `/baocao/lietke?loai=kh` | Thấy KH cả 2 chi nhánh, sort theo `MACN, HO, TEN` |
+| 2 | Login `admin/1` chọn TRACUU → `/baocao/lietke?loai=tk&tungay=...&denngay=...` | Thấy TK của cả 2 chi nhánh (không duplicate) |
+| 3 | Login `admin/1` chọn TRACUU → `/baocao/saoke` chọn TK cụ thể | Sao kê đầy đủ + Số dư đầu kỳ tính đúng bằng Window Function |
+| 4 | Login `BT001/1` (ChiNhanh) → `/baocao/lietke?loai=kh` | Chỉ thấy KH của BENTHANH |
+| 5 | Login `TD001/1` (ChiNhanh) → `/baocao/lietke?loai=tk` | Chỉ thấy TK của TANDINH |
+| 6 | Login KH (`0123456789/MACPIN`) → `/baocao/saoke` | Chỉ thấy TK của chính KH đó, tự lọc theo `LOGIN_NAME()` trong SP |

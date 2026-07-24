@@ -11,6 +11,10 @@ GO
 --     MACN TK = MACN NV → cùng chi nhánh → UPDATE local
 --     MACN TK ≠ MACN NV → khác chi nhánh → UPDATE qua LINK1
 --   GD_GOIRUT phân mảnh ngang theo NV → log ghi tại chi nhánh thực hiện GD.
+--
+-- Rẽ nhánh transaction (fix #6):
+--   TK cùng CN với NV → BEGIN TRANSACTION (local, không cần MSDTC).
+--   TK khác CN với NV → BEGIN DISTRIBUTED TRANSACTION (dùng LINK1 → 2-phase commit).
 -- ==========================================================================
 CREATE OR ALTER PROCEDURE [dbo].[sp_RutTien]
     @SOTK   nchar(9),
@@ -52,34 +56,48 @@ BEGIN
         SET @IsLocal = 1;
 
     BEGIN TRY
-        BEGIN DISTRIBUTED TRANSACTION;
-
-        -- Trừ tiền: local hoặc qua LINK1 (kiểm tra số dư đủ trong cùng câu lệnh)
         IF @IsLocal = 1
         BEGIN
+            -- === Nhánh LOCAL: không cần DTC ===
+            BEGIN TRANSACTION;
+
             UPDATE TaiKhoan
             SET SODU = SODU - @SOTIEN
             WHERE RTRIM(SOTK) = RTRIM(@SOTK) AND SODU >= @SOTIEN;
+
+            IF @@ROWCOUNT = 0
+            BEGIN
+                ROLLBACK TRANSACTION;
+                RAISERROR(N'Số dư không đủ để rút.', 16, 1);
+                RETURN;
+            END
+
+            INSERT INTO GD_GOIRUT(SOTK, LOAIGD, NGAYGD, SOTIEN, MANV)
+            VALUES(@SOTK, 'RT', GETDATE(), @SOTIEN, @MANV);
+
+            COMMIT TRANSACTION;
         END
         ELSE
         BEGIN
+            -- === Nhánh DISTRIBUTED: UPDATE TK qua LINK1, INSERT log local ===
+            BEGIN DISTRIBUTED TRANSACTION;
+
             UPDATE [LINK1].NGANHANG.dbo.TaiKhoan
             SET SODU = SODU - @SOTIEN
             WHERE RTRIM(SOTK) = RTRIM(@SOTK) AND SODU >= @SOTIEN;
+
+            IF @@ROWCOUNT = 0
+            BEGIN
+                ROLLBACK TRANSACTION;
+                RAISERROR(N'Số dư không đủ để rút.', 16, 1);
+                RETURN;
+            END
+
+            INSERT INTO GD_GOIRUT(SOTK, LOAIGD, NGAYGD, SOTIEN, MANV)
+            VALUES(@SOTK, 'RT', GETDATE(), @SOTIEN, @MANV);
+
+            COMMIT TRANSACTION;
         END
-
-        IF @@ROWCOUNT = 0
-        BEGIN
-            ROLLBACK TRANSACTION;
-            RAISERROR(N'Số dư không đủ để rút.', 16, 1);
-            RETURN;
-        END
-
-        -- Ghi log giao dịch rút tiền (luôn local — GD_GOIRUT phân mảnh theo NV)
-        INSERT INTO GD_GOIRUT(SOTK, LOAIGD, NGAYGD, SOTIEN, MANV)
-        VALUES(@SOTK, 'RT', GETDATE(), @SOTIEN, @MANV);
-
-        COMMIT TRANSACTION;
     END TRY
     BEGIN CATCH
         IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;

@@ -1,503 +1,424 @@
-# 🛠️ Nhật Ký Sự Cố & Cách Xử Lý (Troubleshooting Log)
+# Sự Cố Cốt Lõi & Cách Xử Lý (Troubleshooting)
 
-Tài liệu này ghi lại các sự cố thực tế gặp phải trong quá trình triển khai và chuẩn hoá Stored Procedure trên mô hình 4 SQL Server instance, cùng nguyên nhân gốc rễ và cách xử lý. Dùng để ôn tập vấn đáp vì đây là những câu hỏi rất hay bị hỏi xoáy.
+Tài liệu tổng hợp **10 sự cố kinh điển** trong mô hình 4 SQL Server instance của hệ thống ngân hàng phân tán, cùng nguyên nhân gốc rễ và cách xử lý. Đây là những case rất hay bị hỏi xoáy trong vấn đáp về CSDL phân tán. 5 sự cố đầu là các case kỹ thuật hạ tầng; 5 sự cố sau (6–10) là bài học nghiệp vụ + defense-in-depth phát hiện trong đợt refactor tháng 07/2026.
 
 ---
 
-## Sự cố 1: Không `DROP` được Stored Procedure cũ tại Subscriber
+## Sự cố 1 — DDL bị chặn trên Subscriber (Replication Article)
 
 **Triệu chứng:**
 ```
-Msg 3724, Level 16, State 2
-Cannot drop the procedure 'dbo.SP_DangNhap' because it is being used for replication.
+Msg 21531: The data definition language (DDL) command cannot be executed at the Subscriber.
+Msg 21530: The schema change failed during execution of an internal replication procedure.
+Msg 3609: The transaction ended in the trigger. The batch has been aborted.
 ```
-Xảy ra khi chạy `DROP PROCEDURE dbo.SP_DangNhap` tại server **TANDINH (SQL2)**.
+Xảy ra khi chạy `CREATE OR ALTER PROCEDURE sp_Login_App` hoặc `SP_TaoTaiKhoan` trực tiếp trên Subscriber (SQL3 — TRACUU).
 
 **Nguyên nhân gốc rễ:**
-Thường là do SP đã được đăng ký làm một **Article** trong Publication tại site NGUON (Publisher). SQL Server Replication khoá quyền `DROP`/`ALTER` trực tiếp lên đối tượng này tại các Subscriber, để tránh làm lệch pha cấu trúc giữa Publisher và Subscriber.
+Cả hai SP này là **Article** trong Publication `PUB_TRACUU`. Merge Replication khoá cứng mọi DDL (`CREATE / ALTER / DROP`) trên đối tượng đã đăng ký Article, ở tất cả Subscriber — cơ chế bảo vệ để cấu trúc Publisher/Subscriber không bị lệch pha. Trigger `MSmerge_tr_alterschemaonly` chính là "cửa gác" thực hiện việc chặn này.
 
-**Cách xử lý đã chọn:**
-**[Cập nhật 19/06/2026]**: Trước khi kết luận bị khoá do Replication, đã kiểm tra lại bằng lệnh `sp_helparticle` trên cả 3 Publication (PUB_BENTHANH, PUB_TANDINH, PUB_TRACUU). Kết quả xác nhận `SP_DangNhap` KHÔNG nằm trong Article của bất kỳ Publication nào. Nó chỉ là SP rác còn sót lại. Do đó, đã xoá được trực tiếp bằng lệnh `DROP PROCEDURE IF EXISTS SP_DangNhap;` mà không gặp lỗi khoá DDL, không cần qua bước `sp_droparticle`.
+**Cách xử lý:**
+Không bao giờ ALTER SP trên Subscriber. Muốn sửa nội dung SP thuộc Article:
+1. Deploy sửa trên **NGUON (Publisher)**.
+2. `sp_startpublication_snapshot @publication = 'PUB_TRACUU'` → tạo snapshot mới.
+3. `sp_reinitmergesubscription` để Subscriber đánh dấu reinit.
+4. View Synchronization Status → Start → SQL3 nhận SP mới qua replication.
 
-**Cách xử lý (nếu thực sự là Article):**
-Phải gỡ Article ra khỏi Publication tại NGUON trước:
-```sql
--- Chạy tại NGUON (Publisher)
-EXEC sp_dropsubscription
-    @publication = N'TenPublication',
-    @article = N'SP_DangNhap',
-    @subscriber = N'ALL';
-GO
-EXEC sp_droparticle
-    @publication = N'TenPublication',
-    @article = N'SP_DangNhap';
-GO
-EXEC sp_startpublication_snapshot @publication = N'TenPublication';
-```
+**Bài học (quan trọng cho vấn đáp):**
+> SP nào đã là Article trong Publication thì **chỉ được sửa tại Publisher**. Muốn sửa `sp_Login_App`, `SP_TaoTaiKhoan`, `sp_ChuyenNhanVien`, `sp_MoTaiKhoan`, `sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien`... thì làm ở NGUON rồi để Replication tự đẩy xuống.
+>
+> **Hệ quả kiến trúc:** SP nào phải chạy trên nhiều site có schema khác nhau (ví dụ: `sp_Login_App` chạy cả trên SQL1/SQL2 có bảng `NhanVien` và trên TRACUU/SQL3 không có bảng đó) cần dùng `OBJECT_ID('dbo.NhanVien','U') IS NOT NULL` guard để tự thích nghi — một bản code duy nhất chạy được trên tất cả site.
 
 ---
 
-## Sự cố 2: Không `CREATE OR ALTER` được SP tại Subscriber (lỗi DDL)
-
-**Triệu chứng:**
-```
-Msg 21531, Level 16, State 1
-The data definition language (DDL) command cannot be executed at the Subscriber.
-In a republishing hierarchy, DDL commands can only be executed at the root Publisher,
-not at any of the republishing Subscribers.
-
-Msg 21530, Level 16, State 1
-The schema change failed during execution of an internal replication procedure.
-
-Msg 3609, Level 16, State 2
-The transaction ended in the trigger. The batch has been aborted.
-```
-Xảy ra khi chạy `CREATE OR ALTER PROCEDURE dbo.sp_Login_App` và `dbo.SP_TaoTaiKhoan` tại server **TRACUU (SQL3)**.
-
-**Nguyên nhân gốc rễ:**
-Cùng bản chất với Sự cố 1, nhưng lần này là lệnh `ALTER` (không phải `DROP`). Cả 2 SP này đã thuộc Publication. Replication chặn **mọi lệnh DDL** (`CREATE`, `ALTER`, `DROP`) lên các đối tượng đã đăng ký Article, tại bất kỳ Subscriber nào — kể cả trong mô hình republishing nhiều tầng.
-
-**Cách xử lý đã chọn:**
-Không `ALTER` lại 2 SP này tại TRACUU — giữ nguyên bản đã được Replicate sẵn từ NGUON. Việc chuẩn hoá tại TRACUU chỉ tập trung vào các SP đọc/báo cáo **chưa từng được đưa vào Publication** (`SP_SaoKeTaiKhoan`, `sp_LietKeTaiKhoanTheoNgay`, `sp_LietKeKhachHang`) — các SP này tạo mới hoàn toàn nên không bị khoá.
-
-**Bài học rút ra (quan trọng cho vấn đáp):**
-> Bất kỳ SP nào đã là Article trong Publication thì **chỉ được sửa tại Publisher (NGUON)**. Muốn sửa nội dung `sp_Login_App` hay `SP_TaoTaiKhoan`, phải làm tại NGUON rồi để Replication tự đẩy xuống toàn bộ Subscriber.
-
----
-
-## Sự cố 3: `Login failed for user 'HTKN'` khi gọi Linked Server
+## Sự cố 2 — `Login failed` khi gọi Linked Server (Login là đối tượng cấp Server)
 
 **Triệu chứng:**
 ```
 Msg 18456, Level 14, State 1
 Login failed for user 'HTKN'.
 ```
-Xảy ra khi chạy `SELECT TOP 1 * FROM [LINK1].NGANHANG.dbo.TaiKhoan;` hoặc `[LINK2]...` tại server **TRACUU (SQL3)**, dù đã xác nhận Login `HTKN` **tồn tại và đang bật (`is_disabled = 0`)** ngay trên chính SQL3.
-
-**Nguyên nhân gốc rễ (điểm dễ nhầm lẫn nhất):**
-`HTKN` là Login cấp **Server (instance-level)** — đây chính là tài khoản SQL mà ứng dụng Node.js dùng để kết nối CSDL (xem `database_connection.md`, mật khẩu mặc định `123`).
-
-Login là đối tượng cấp Server, **KHÔNG nằm trong phạm vi đồng bộ của Replication** (Replication chỉ đồng bộ đối tượng cấp Database: bảng, SP, dữ liệu). Vì vậy:
-- `HTKN` tồn tại trên SQL3 không có nghĩa là nó cũng tồn tại trên SQL1, SQL2.
-- Khi SQL3 gọi sang `[LINK1]` (trỏ tới BENTHANH/SQL1), nó cần xác thực **HTKN ở phía SQL1**, không phải ở SQL3.
-- Nếu `HTKN` chưa tồn tại / bị khoá / sai mật khẩu ở đầu SQL1 (hoặc sai mật khẩu trong cấu hình Security Mapping của chính Linked Server `LINK1` tại SQL3) → lỗi `Login failed`, dù SQL3 hoàn toàn không có vấn đề gì.
-
-**Quy trình chẩn đoán đã áp dụng:**
-1. Kiểm tra Login `HTKN` trên server **đích** (nơi Linked Server trỏ tới), không phải server đang đứng:
-   ```sql
-   SELECT name, type_desc, is_disabled
-   FROM sys.server_principals
-   WHERE name = 'HTKN';
-   ```
-2. Kiểm tra cấu hình mapping của Linked Server:
-   ```sql
-   SELECT
-       s.name AS LinkedServerName,
-       l.loginname AS LocalLogin,
-       l.remote_name AS RemoteLoginDuocDung,
-       l.uses_self_credential,
-       s.is_remote_login_enabled
-   FROM sys.servers s
-   LEFT JOIN sys.linked_logins l ON s.server_id = l.server_id
-   WHERE s.is_linked = 1;
-   ```
-3. Test trực tiếp bằng `SELECT TOP 1 * FROM [LINKx]...` để xác nhận lỗi nằm ở tầng Linked Server, không phải ở nội dung Stored Procedure.
-
-**Cách xử lý đã áp dụng (cho LINK1 → BENTHANH):**
-Xác nhận `HTKN` đã tồn tại sẵn trên SQL1 → vấn đề chỉ là cấu hình mapping → sửa lại bằng:
-```sql
--- Chạy tại SQL3 (nơi khai báo LINK1)
-EXEC sp_addlinkedsrvlogin
-    @rmtsrvname  = N'LINK1',
-    @useself     = N'False',
-    @locallogin  = NULL,
-    @rmtuser     = N'HTKN',
-    @rmtpassword = N'<mật khẩu đúng của HTKN trên SQL1>';
-```
-→ **Kết quả: LINK1 chạy OK.**
-
-**Cách xử lý cho LINK2 → TANDINH:**
-Lặp lại đúng quy trình 3 bước ở trên, áp dụng cho SQL2 và `LINK2`. Vì Login là đối tượng cấp Server độc lập theo từng instance, bước kiểm tra/tạo Login phải lặp lại cho TỪNG cặp Linked Server, không thể suy ra từ kết quả của LINK1.
-
-**Bài học rút ra (rất hay bị hỏi vấn đáp):**
-> Trong mô hình nhiều SQL Server instance, có **3 thứ cần đồng bộ riêng biệt, theo 3 cơ chế khác nhau**:
-> | Loại đối tượng | Cấp độ | Cơ chế đồng bộ |
-> |---|---|---|
-> | Dữ liệu (data rows) | Database | Replication (tự động) |
-> | Stored Procedure (cấu trúc) | Database | Replication nếu được đưa vào Article (tự động), hoặc chạy tay |
-> | Login | **Server (instance)** | **KHÔNG có cơ chế tự động** — luôn phải tạo tay ở từng instance |
-
----
-
-## Tổng kết quy trình chẩn đoán lỗi Linked Server (dùng lại cho lần sau)
-
-Khi gặp `Login failed` hoặc bất kỳ lỗi liên quan `[LINKx]`, làm theo đúng thứ tự:
-
-1. Test trực tiếp `SELECT TOP 1 * FROM [LINKx].NGANHANG.dbo.<TenBang>;` để cô lập lỗi — xác nhận lỗi nằm ở Linked Server, không phải ở SP gọi nó.
-2. Kiểm tra Login tồn tại + đang bật ở **server đích** mà Linked Server đó trỏ tới (không phải server đang đứng).
-3. Kiểm tra cấu hình mapping (`sys.servers` + `sys.linked_logins`) xem đang dùng login nào, chế độ `uses_self_credential` hay mapping cụ thể.
-4. Cập nhật lại bằng `sp_addlinkedsrvlogin` với đúng mật khẩu hiện tại.
-5. Lặp lại cho từng Linked Server riêng biệt (LINK1, LINK2...) — không suy luận lỗi đã hết chỉ vì 1 cái đã chạy được.
-
----
-
-## Sự cố 4: Lỗi `MSDTC on server is unavailable` hoặc lệnh bị treo khi chạy `SP_ChuyenNhanVien` qua Node.js
-
-**Triệu chứng:**
-Gọi thủ tục `SP_ChuyenNhanVien` bằng Node.js (thư viện `mssql` dùng `tedious`) bị lỗi, dù gọi trên SSMS thì chạy tốt. Thường báo lỗi không hỗ trợ Distributed Transaction.
+Xảy ra khi chạy `SELECT TOP 1 * FROM [LINK1].NGANHANG.dbo.TaiKhoan` trên SQL3 — dù `HTKN` **tồn tại và đang bật** trên chính SQL3.
 
 **Nguyên nhân gốc rễ:**
-Thư viện `tedious` (driver phổ biến nhất cho Node.js kết nối SQL Server) **không hỗ trợ** các giao dịch phân tán (Distributed Transactions) qua MSDTC (Microsoft Distributed Transaction Coordinator). Do `SP_ChuyenNhanVien` sử dụng lệnh `BEGIN DISTRIBUTED TRANSACTION`, nó đòi hỏi client driver cũng phải hỗ trợ cơ chế two-phase commit này.
+`HTKN` là **SQL Login cấp Server (instance-level)**. Login **KHÔNG nằm trong phạm vi đồng bộ của Replication** — Replication chỉ đồng bộ đối tượng cấp Database (bảng, SP, dữ liệu, view). Khi SQL3 gọi sang `[LINK1]` (trỏ tới SQL1), nó xác thực bằng Login ở **phía SQL1**, không phải SQL3. Nếu `HTKN` chưa được tạo trên SQL1, hoặc mật khẩu trong `sp_addlinkedsrvlogin` sai → `Login failed`.
 
-**Cách xử lý đã áp dụng:**
-Thay vì dùng thư viện `mssql` thông thường, hệ thống đã dùng một giải pháp Workaround: **Gọi công cụ dòng lệnh `sqlcmd` của Windows (Native Client)** bằng hàm `execFile` trong `child_process` của Node.js.
-`sqlcmd` dùng Native Client hoặc ODBC driver, hỗ trợ đầy đủ MSDTC.
+**Cách xử lý:**
+Với mỗi cặp Linked Server, phải làm 3 việc riêng biệt:
+1. Kiểm tra Login tồn tại + đang bật ở server **đích** (nơi LINKx trỏ tới):
+   ```sql
+   SELECT name, is_disabled FROM sys.server_principals WHERE name = 'HTKN';
+   ```
+2. Kiểm tra mapping của Linked Server:
+   ```sql
+   SELECT s.name, l.remote_name, l.uses_self_credential
+   FROM sys.servers s LEFT JOIN sys.linked_logins l ON s.server_id = l.server_id
+   WHERE s.is_linked = 1;
+   ```
+3. Cập nhật mapping với đúng mật khẩu:
+   ```sql
+   EXEC sp_addlinkedsrvlogin
+       @rmtsrvname  = N'LINK1',
+       @useself     = N'False',
+       @locallogin  = NULL,
+       @rmtuser     = N'HTKN',
+       @rmtpassword = N'<mật khẩu HTKN trên server đích>';
+   ```
+
+**Bài học (rất hay bị hỏi vấn đáp):**
+> Trong mô hình nhiều instance, có **3 loại đối tượng đồng bộ theo 3 cách khác nhau**:
+>
+> | Đối tượng | Cấp độ | Cơ chế đồng bộ |
+> |---|---|---|
+> | Dữ liệu (rows) | Database | Replication (tự động) |
+> | Stored Procedure | Database | Replication nếu là Article, hoặc chạy tay từng site |
+> | **Login / SID** | **Server (instance)** | **KHÔNG có cơ chế tự động** — luôn phải tạo tay ở từng instance |
+>
+> Vì vậy: khi tạo user KH mới trong ứng dụng, hệ thống phải **fan-out `CREATE LOGIN` sang cả BENTHANH + TANDINH + TRACUU** để KH có thể tra cứu từ mọi site.
+
+---
+
+## Sự cố 3 — `tedious` không hỗ trợ MSDTC → phải bung `sqlcmd`
+
+**Triệu chứng:**
+Gọi `sp_ChuyenNhanVien`, `sp_ChuyenTien`, `sp_MoTaiKhoan` (đều dùng `BEGIN DISTRIBUTED TRANSACTION`) từ Node.js qua `mssql`/`tedious` bị treo hoặc báo lỗi `MSDTC on server is unavailable`, dù chạy trên SSMS thì OK.
+
+**Nguyên nhân gốc rễ:**
+Driver `tedious` (backend của thư viện `mssql`) **không hỗ trợ đầy đủ Two-Phase Commit** qua MSDTC. Khi SP mở distributed tran, driver dễ mất kết nối, không rollback được, hoặc treo. Đây là hạn chế cố hữu của tedious — không phải bug của app.
+
+**Cách xử lý:**
+Bọc SP bằng **`sqlcmd` CLI** qua `child_process.execFile`. `sqlcmd` dùng Native Client / ODBC — hỗ trợ MSDTC nguyên vẹn:
 
 ```javascript
-// db.js (Hàm execSPAdmin)
+// db.js — execSPAdmin (rút gọn)
 execFile('sqlcmd', [
   '-S', serverAddr,
   '-d', 'NGANHANG',
-  '-U', 'HTKN',
-  '-P', '123',
-  '-Q', query,
-  '-b'   // exit với error code nếu SQL lỗi
-], ...)
+  '-U', 'HTKN', '-P', '123',
+  ...vArgs,                    // -v KEY=VALUE cho từng param (chống injection)
+  '-Q', `EXEC ${spName} @A=N'$(A)', @B=N'$(B)'`,
+  '-b',                        // exit với error code nếu SQL lỗi
+  '-o', tmpFile, '-f', '65001' // ép output ra file UTF-8 (giữ dấu tiếng Việt)
+], ...);
 ```
 
-**Bài học rút ra:**
-> Khi thiết kế hệ thống CSDL Phân Tán, nếu bắt buộc phải dùng `BEGIN DISTRIBUTED TRANSACTION` trong Stored Procedure, cần đảm bảo Driver của ngôn ngữ lập trình phía Backend (Node.js, Java, .NET) hỗ trợ MSDTC. Nếu không, phải dùng cách bọc tiến trình hoặc gọi Native driver.
+**3 điểm quan trọng trong implementation:**
+1. **Chống shell injection**: SQL template `-Q` chỉ chứa `$(VarName)` — giá trị đi qua `-v` (channel riêng). Vẫn escape `'` → `''` để không vỡ SQL string literal.
+2. **Encoding tiếng Việt**: `sqlcmd` khi xuất qua stdout/pipe dùng OEM codepage → mất dấu tiếng Việt (`?`). Phải ghi ra file `-o file -f 65001` (UTF-8) rồi Node đọc lại → mới giữ đúng thông báo `RAISERROR`.
+3. **Lọc header kỹ thuật**: `sqlcmd` tự thêm dòng `Msg ###, Level ##, State ##, Server ..., Procedure ..., Line ##` trước nội dung `RAISERROR`. Regex bỏ dòng này để hiển thị message sạch cho user.
+
+SP dùng `execSPAdmin`: `sp_ChuyenTien`, `sp_GuiTien`, `sp_RutTien`, `sp_MoTaiKhoan`, `sp_ChuyenNhanVien`, `SP_PhucHoiNhanVien`.
+
+**Bài học:**
+> Khi thiết kế hệ thống CSDL Phân Tán mà đã lỡ dùng `BEGIN DISTRIBUTED TRANSACTION` trong SP, cần đảm bảo Driver phía app hỗ trợ MSDTC. Với Node.js: bọc `sqlcmd`. Với .NET/Java: dùng ADO.NET/JDBC XA driver.
 
 ---
 
-## Sự cố 5: MANV trùng giữa 2 chi nhánh khi chuyển nhân viên
+## Sự cố 4 — Duplicate data trên TRACUU (Full Replication vs Horizontal Fragmentation)
 
 **Triệu chứng:**
-Nhân viên `NV01` tồn tại ở cả BENTHANH (SQL1) và TANDINH (SQL2). Khi chuyển nhân viên từ chi nhánh này sang chi nhánh kia, SP_ChuyenNhanVien INSERT thẳng MANV cũ vào chi nhánh đích → lỗi `UNIQUE KEY violation` hoặc ghi đè nhân viên sai.
+Trang "Liệt kê tài khoản" và dropdown "Sao kê" trên TRACUU hiển thị mỗi tài khoản **2 lần**. Form liệt kê TK ra 14 dòng thay vì 7.
 
 **Nguyên nhân gốc rễ:**
-MANV ban đầu (`NV01`, `NV02`...) không mang thông tin chi nhánh. 2 chi nhánh độc lập đều sinh MANV từ 1, dẫn đến không gian MANV trùng nhau hoàn toàn.
+Nhầm lẫn về **kiểu replicate** của các bảng:
 
-**Cách xử lý đã áp dụng:**
-Triển khai hệ thống **prefix MANV theo chi nhánh**:
-- BENTHANH: `BT001`, `BT002`, `BT003`...
-- TANDINH: `TD001`, `TD002`, `TD003`, `TD004`...
+| Bảng | Kiểu | Trên SQL1 | Trên SQL2 | UNION ALL LINK1+LINK2 |
+|---|---|---|---|---|
+| `TaiKhoan` | **Full replication** | Có TK của cả 2 chi nhánh | Có TK của cả 2 chi nhánh | ❌ Duplicate x2 |
+| `ChiNhanh` | **Full replication** | Có cả 2 chi nhánh | Có cả 2 chi nhánh | ❌ Duplicate x2 |
+| `NhanVien` | **Phân mảnh ngang** theo MACN | Chỉ NV chi nhánh BENTHANH | Chỉ NV chi nhánh TANDINH | ✅ Đúng |
+| `GD_GOIRUT`, `GD_CHUYENTIEN` | **Phân mảnh ngang** theo chi nhánh | Chỉ GD của chi nhánh này | Chỉ GD của chi nhánh này | ✅ Đúng |
 
-Migration 3 bước:
-1. Chạy `sql/setup/migrate_manv_benthanh.sql` trên SQL1 → đổi NV01→BT001, NV02→BT002, NV03→BT003; đổi tên SQL Login tương ứng.
-2. Chạy `sql/setup/migrate_manv_tandinh.sql` trên SQL2 → đổi NV01→TD001... NV04→TD004; đổi tên SQL Login.
-3. Chạy `sql/setup/migrate_quantrilogin.sql` trên cả 3 server → xóa record `QuanTriLogin` kiểu cũ (`NV01_BT`, `NV02_TD`...), INSERT lại với `LoginName = MANV mới`.
+SP TRACUU dùng `UNION ALL [LINK1]...TaiKhoan + [LINK2]...TaiKhoan` → mỗi TK ra 2 lần vì cả 2 site đều đã có đủ.
 
-SP_ChuyenNhanVien cũng được cập nhật: khi chuyển sang chi nhánh đích, sinh MANV mới với prefix của chi nhánh đó (không sao chép MANV cũ).
+**Cách xử lý:**
+1. Với bảng **full replication** (`TaiKhoan`, `ChiNhanh`): **chỉ đọc từ 1 LINK**. Ví dụ:
+   ```sql
+   SELECT * FROM [LINK1].NGANHANG.dbo.TaiKhoan
+   ```
+2. Với bảng **phân mảnh ngang** (`NhanVien`, `GD_*`): mới dùng `UNION ALL LINK1 + LINK2`.
+3. Với JOIN có thể trả nhiều row cùng key (VD `KhachHang` có nhiều row cùng CMND), thay `LEFT JOIN` bằng `OUTER APPLY (SELECT TOP 1 ...)` để tránh nhân bản.
 
-**Bài học rút ra:**
-> Trong mô hình phân mảnh ngang theo chi nhánh, các khóa chính (PK) tự sinh phải mang thông tin phân mảnh (prefix/suffix) để đảm bảo tính duy nhất toàn cục. Không nên để các mảnh độc lập tự sinh PK từ 1.
+**Bài học (rất core cho vấn đáp CSDL phân tán):**
+> Trước khi UNION ALL qua Linked Server, phải xác nhận bảng **có thực sự phân mảnh ngang** hay đã **replicate toàn phần**. Bảng replicate toàn phần chỉ cần đọc từ 1 LINK; UNION ALL sẽ gây duplicate = số lượng bản sao. Trong hệ thống này:
+> - Phân mảnh ngang: `NhanVien`, `GD_GOIRUT`, `GD_CHUYENTIEN` (fragmentation predicate = `MACN`).
+> - Full replication: `TaiKhoan`, `ChiNhanh` (để mọi site có bức tranh toàn cục).
+> - Full replication vào TRACUU (subset): `KhachHang` (chỉ replicate xuôi 1 chiều vào SQL3).
 
 ---
 
-## Sự cố 10: Dữ liệu TaiKhoan bị duplicate x2 trên TRACUU [05/07/2026]
-
-**Triệu chứng:**
-Trang "Liệt kê tài khoản" và dropdown "Sao kê giao dịch" trên TRACUU hiển thị mỗi tài khoản 2 lần. Form Liệt kê TK: 14 dòng thay vì 7. Dropdown sao kê: mỗi SOTK xuất hiện 2 lần.
-
-**Nguyên nhân gốc rễ:**
-Bảng `TaiKhoan` được **replicate full** (giống `ChiNhanh`) — mỗi site (SQL1, SQL2) đã có đầy đủ TK của cả 2 chi nhánh. SP trên TRACUU dùng `UNION ALL [LINK1]...TaiKhoan + [LINK2]...TaiKhoan` → mỗi TK xuất hiện đúng 2 lần (1 từ LINK1, 1 từ LINK2).
-
-Đây KHÔNG phải duplicate trong database (GROUP BY HAVING COUNT>1 = 0 rows), mà là do logic UNION ALL sai.
-
-Lưu ý: GD_GOIRUT, GD_CHUYENTIEN, NhanVien **KHÔNG** replicate full (phân mảnh ngang theo MACN) → UNION ALL LINK1+LINK2 vẫn đúng cho các bảng này.
-
-**Cách xử lý đã áp dụng:**
-1. Sửa `sp_DanhSachTaiKhoan` và `sp_LietKeTaiKhoanTheoNgay`: bỏ UNION ALL, chỉ đọc từ `[LINK1].NGANHANG.dbo.TaiKhoan` (LINK1 đã có đủ data).
-2. Đổi `LEFT JOIN KhachHang` thành `OUTER APPLY (SELECT TOP 1 ...)` để tránh nhân bản do KhachHang có thể có nhiều row cùng CMND.
-3. Route `baocao.js` sao kê GET/POST: thay `UNION ALL LINK1+LINK2` bằng `SELECT DISTINCT ... FROM [LINK1]...TaiKhoan` khi server=TRACUU.
-4. Restart app để clear connection pool cache (pool cũ cache kết quả UNION ALL cũ).
-
-**Sự cố phụ — Login failed for TD001 trên TRACUU:**
-Route ban đầu gọi `sp_LietKeTaiKhoanTheoNgay` trên TRACUU cho mọi user. Nhưng TD001 (ChiNhanh) không có login trên SQL3 → lỗi `Login failed for user 'TD001'`. Fix: chỉ NganHang (admin) gọi SP trên TRACUU; ChiNhanh query TaiKhoan local trực tiếp.
-
-**Bài học rút ra:**
-> Trước khi dùng UNION ALL qua Linked Server, phải xác nhận bảng có thực sự phân mảnh ngang hay đã replicate full. Bảng replicate full chỉ cần đọc từ 1 LINK — UNION ALL sẽ gây duplicate. Dùng `OUTER APPLY TOP 1` thay vì `LEFT JOIN` khi JOIN có thể trả nhiều row cùng key.
-
----
-
-## Sự cố 7: PUB_TRACUU subscription hỏng sau khi bỏ article [30/06/2026]
-
-**Triệu chứng:**
-Sau khi sửa PUB_TRACUU (bỏ 5 article, chỉ giữ KhachHang), Merge Agent báo lỗi:
-```
-The publication 'PUB_TRACUU' does not exist. (Error 20026)
-The subscription to publication 'PUB_TRACUU' could not be verified. (MSSQL_REPL-2147201019)
-Login failed for user 'NT AUTHORITY\SYSTEM'. (Error 18456)
-```
-
-**Nguyên nhân gốc rễ:**
-1. Subscription metadata trên SQL3 bị lệch với Publication mới trên NGUON sau khi thay đổi article.
-2. Merge Agent chạy dưới account `NT AUTHORITY\SYSTEM` nhưng account này không có quyền truy cập database `NGANHANG` trên SQL3.
-3. Các bảng cũ (NhanVien, TaiKhoan, GD_GOIRUT, GD_CHUYENTIEN, ChiNhanh) vẫn tồn tại trên SQL3 dù không còn replicate — Replication chỉ ngưng đồng bộ, không tự xóa bảng.
-
-**Cách xử lý đã áp dụng (5 bước):**
-
-1. **SQL3:** Dọn metadata cũ:
-```sql
-EXEC sp_removedbreplication @dbname = 'NGANHANG', @type = 'merge';
-```
-
-2. **SQL3:** DROP bảng thừa (FK phải xóa trước):
-```sql
-DROP TABLE IF EXISTS dbo.GD_CHUYENTIEN, dbo.GD_GOIRUT, dbo.NhanVien, dbo.TaiKhoan;
--- ChiNhanh bị FK_KhachHang_ChiNhanh giữ → xóa FK trước
-ALTER TABLE KhachHang DROP CONSTRAINT FK_KhachHang_ChiNhanh;
-DROP TABLE dbo.ChiNhanh;
-```
-
-3. **SQL3:** Cấp quyền cho Merge Agent:
-```sql
-CREATE LOGIN [NT AUTHORITY\SYSTEM] FROM WINDOWS;
-CREATE USER [NT AUTHORITY\SYSTEM] FOR LOGIN [NT AUTHORITY\SYSTEM];
-ALTER ROLE db_owner ADD MEMBER [NT AUTHORITY\SYSTEM];
-```
-
-4. **NGUON:** Tạo lại subscription (Push):
-```sql
-EXEC sp_addmergesubscription
-    @publication = 'PUB_TRACUU',
-    @subscriber = 'ES-HAITD16\SQL3',
-    @subscriber_db = 'NGANHANG',
-    @subscription_type = 'Push';
-```
-
-5. **NGUON:** Start Snapshot Agent + Start Merge Agent Job:
-```sql
-EXEC msdb.dbo.sp_start_job @job_name = 'ES-HAITD16-NGANHANG-PUB_TRACUU-ES-HAITD16\SQL3-4';
-```
-
-6. **SQL3:** Deploy lại SP đặc thù TRACUU (bị xóa bởi `sp_removedbreplication`):
-```sql
--- Chạy sql/deploy_tracuu.sql
-```
-
-**Kết quả:** SQL3 chỉ còn 2 bảng: `KhachHang` (replicate từ NGUON) + `QuanTriLogin` (local). Mọi dữ liệu NhanVien/TaiKhoan/GD được đọc qua Linked Server bằng SP đặc thù.
-
-**Bài học rút ra:**
-> Khi thay đổi article trong Publication (thêm/bỏ bảng), subscription có thể bị lệch metadata. Quy trình an toàn: (1) xóa subscription cũ, (2) sửa publication, (3) tạo snapshot mới, (4) tạo lại subscription. Ngoài ra, Merge Agent chạy dưới service account cần có quyền trên database của Subscriber.
-
----
-
-## Sự cố 8: `sp_Login_App` crash trên TRACUU — "Invalid object name 'NhanVien'"
-
-**Triệu chứng:**
-```
-Lỗi hệ thống: Invalid object name 'NhanVien'.
-```
-Admin (`admin`/`1`) không thể đăng nhập vào chi nhánh `TRACUU`.
-
-**Nguyên nhân gốc rễ:**
-`sp_Login_App` query `FROM NhanVien` và `FROM ChiNhanh` — 2 bảng này không tồn tại trên SQL3 (TRACUU chỉ có `KhachHang` + `QuanTriLogin`). SP crash ngay khi được gọi từ SQL3.
-
-**Cách xử lý đã áp dụng:**
-Thêm `OBJECT_ID` guard vào SP:
-```sql
-IF OBJECT_ID('dbo.NhanVien', 'U') IS NOT NULL
-BEGIN
-    SELECT @MANV = MANV, ... FROM NhanVien WHERE ...
-END
-
-IF @MANV IS NULL AND @NHOM = 'NganHang'
-BEGIN
-    SET @MACN = CASE WHEN OBJECT_ID('dbo.ChiNhanh','U') IS NOT NULL
-                     THEN (SELECT TOP 1 MACN FROM ChiNhanh)
-                     ELSE N'TRACUU' END;
-END
-```
-
-Deploy qua đúng mô hình phân tán (không ALTER trực tiếp trên Subscriber):
-1. Disable `MSmerge_tr_alterschemaonly` trên **NGUON (ES-HAITD16)**: `DISABLE TRIGGER [MSmerge_tr_alterschemaonly] ON DATABASE`
-2. `CREATE OR ALTER PROCEDURE sp_Login_App` với OBJECT_ID guard trên NGUON
-3. Re-enable trigger
-4. `sp_startpublication_snapshot @publication = 'PUB_TRACUU'` → tạo snapshot mới
-5. `sp_reinitmergesubscription` → đánh dấu SQL3 reinit
-6. View Synchronization Status → Start → SQL3 nhận SP mới qua replication
-
-**Bài học rút ra:**
-> SP nào là Article trong Publication thì **chỉ sửa tại Publisher (NGUON)**. Replication tự đẩy xuống Subscriber — không DDL trực tiếp trên Subscriber vì `MSmerge_tr_alterschemasonly` chặn mọi DDL.
-> Khi SP phải chạy trên nhiều site có schema khác nhau, dùng `OBJECT_ID` guard để SP tự thích nghi — một bản code chạy được trên tất cả site.
-
----
-
-## Sự cố 9: KhachHang không đăng nhập được sau khi admin reset password
-
-**Triệu chứng:**
-Admin reset password cho KH qua giao diện quản trị → KH thử đăng nhập vẫn bị lỗi, dù credentials đúng.
-
-**Nguyên nhân gốc rễ:**
-`reset-password` trong `routes/quantri.js` dùng `DROP LOGIN + CREATE LOGIN` (thay vì `ALTER LOGIN`) để đổi mật khẩu. Khi DROP+CREATE, SQL Server sinh **SID mới** cho login. DB User trong database vẫn còn nhưng liên kết theo SID cũ → **orphaned user** — kết nối SQL thành công nhưng không thuộc role `KhachHang` nữa → mọi SP bị từ chối.
-
-*(Lý do dùng DROP+CREATE: `ALTER LOGIN` bị replication trigger chặn trên một số server.)*
-
-**Cách xử lý đã áp dụng:**
-
-*Fix code `quantri.js`*: Sau DROP+CREATE login, tự động drop + recreate DB User và gán lại role từ `QuanTriLogin.MaThamChieu` / `NhomQuyen`.
-
-*Fix hàng loạt orphaned users* (script chạy trên từng server SQL1/SQL2/SQL3):
-```sql
-USE NGANHANG; SET NOCOUNT ON;
-DECLARE @UserName nvarchar(128), @LoginName nvarchar(128), @RoleName nvarchar(128), @sql nvarchar(1000), @count int = 0;
-DECLARE cur CURSOR FOR
-    SELECT dp.name, ql.LoginName, ql.NhomQuyen
-    FROM sys.database_principals dp
-    LEFT JOIN sys.server_principals sp ON dp.sid = sp.sid
-    JOIN dbo.QuanTriLogin ql ON RTRIM(ql.MaThamChieu) = RTRIM(dp.name)
-    WHERE dp.type = 'S' AND dp.principal_id > 4 AND sp.name IS NULL;
-OPEN cur; FETCH NEXT FROM cur INTO @UserName, @LoginName, @RoleName;
-WHILE @@FETCH_STATUS = 0
-BEGIN
-    IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @LoginName)
-    BEGIN
-        EXEC sp_executesql N'DROP USER [' + REPLACE(@UserName,']',']]') + N']';
-        EXEC sp_executesql N'CREATE USER [' + REPLACE(@UserName,']',']]') + N'] FOR LOGIN [' + REPLACE(@LoginName,']',']]') + N']';
-        EXEC sp_executesql N'EXEC sp_addrolemember ''' + REPLACE(@RoleName,'''','''''') + N''', [' + REPLACE(@UserName,']',']]') + N']';
-        SET @count += 1; PRINT '✓ Fixed: ' + @UserName;
-    END
-    FETCH NEXT FROM cur INTO @UserName, @LoginName, @RoleName;
-END
-CLOSE cur; DEALLOCATE cur;
-PRINT '--- Hoàn thành: ' + CAST(@count AS varchar) + ' orphaned user(s) ---';
-```
-
-**Bài học rút ra:**
-> `DROP LOGIN + CREATE LOGIN` đổi SID → DB User bị orphaned. Luôn re-link DB User sau khi recreate login. Script fix hàng loạt dựa vào bảng `QuanTriLogin` — đây là lý do bảng này phải được cập nhật đầy đủ khi tạo tài khoản.
-
----
-
-## Sự cố 11: Lỗi "session is in the kill state" khi mở tài khoản [14/07/2026]
+## Sự cố 5 — `session is in the kill state` khi mở tài khoản (Merge Trigger + Implicit Distributed Tran)
 
 **Triệu chứng:**
 ```
 Cannot continue the execution because the session is in the kill state.
 ```
-Xảy ra khi nhân viên ChiNhanh mở tài khoản mới (POST `/taikhoan/mo`), gọi `sp_MoTaiKhoan`.
+Xảy ra khi ChiNhanh mở tài khoản mới, gọi `sp_MoTaiKhoan`.
 
-**Nguyên nhân gốc rễ:**
-SP phiên bản cũ kiểm tra KH bằng `IF NOT EXISTS (... KhachHang) AND NOT EXISTS (... [LINK1].NGANHANG.dbo.KhachHang)` rồi INSERT vào `TaiKhoan` **trong cùng scope**. Bảng `TaiKhoan` có Merge Replication → INSERT kích hoạt trigger `MSmerge_ins_*`. Trigger này cố enlist vào transaction hiện tại, nhưng scope đã có query LINK1 (linked server) → SQL Server tạo **implicit distributed transaction**. Conflict giữa implicit distributed tran và merge trigger → SQL Server kill session.
-
-**Pattern gốc (đã thấy ở `sp_GuiTien`):** Các SP khác (`sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien`) hoạt động đúng vì chúng đọc local/LINK1 **TRƯỚC**, rồi mới `BEGIN DISTRIBUTED TRANSACTION` chỉ chứa write — merge trigger chạy bình thường trong distributed tran tường minh.
-
-**Cách xử lý đã áp dụng (3 phần):**
-
-**1. Sửa SP `sp_MoTaiKhoan`** ([`sql/stored_procedures/20_SP_MoTaiKhoan.sql`](../sql/stored_procedures/20_SP_MoTaiKhoan.sql)):
-- Tách check KH (local + LINK1) ra trước, lưu kết quả vào biến `@KHFound`.
-- INSERT nằm trong `BEGIN DISTRIBUTED TRANSACTION` riêng biệt — scope chỉ có write, không có LINK1 query.
-- Thêm `SET XACT_ABORT ON` + `TRY/CATCH` chuẩn.
+**Nguyên nhân gốc rễ (tinh vi — hay bị hỏi vấn đáp):**
+SP bản cũ có pattern nguy hiểm:
 ```sql
--- SOTK đã được sinh tự động ở tầng app (sinhSOTK) → không cần check trùng
+-- ❌ Query LINK1 và INSERT vào bảng có Merge Replication trong CÙNG scope
+IF NOT EXISTS (SELECT 1 FROM KhachHang WHERE CMND=@CMND)
+   AND NOT EXISTS (SELECT 1 FROM [LINK1].NGANHANG.dbo.KhachHang WHERE CMND=@CMND)
+INSERT INTO TaiKhoan (...) VALUES (...);   -- TaiKhoan có Merge Replication trigger
+```
+
+Bảng `TaiKhoan` có Merge Replication → INSERT kích hoạt trigger `MSmerge_ins_*`. Trigger cố enlist vào transaction hiện tại. Nhưng scope này đã có query `[LINK1]...` → SQL Server tự tạo **implicit distributed transaction** để cover cả LINK1 query. Kết quả: merge trigger enlist vào implicit distributed tran mà nó không biết → conflict → SQL Server kill session.
+
+Các SP `sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien` **không bị lỗi** này vì chúng đọc local/LINK1 **trước**, rồi mới `BEGIN DISTRIBUTED TRANSACTION` tường minh chỉ chứa write — merge trigger hoạt động bình thường trong distributed tran tường minh.
+
+**Cách xử lý (pattern chuẩn):**
+```sql
+-- ✅ Tách 2 phase rõ ràng
 DECLARE @KHFound bit = 0;
-IF EXISTS (SELECT 1 FROM KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
-    SET @KHFound = 1;
-ELSE IF EXISTS (SELECT 1 FROM [LINK1].NGANHANG.dbo.KhachHang WHERE RTRIM(CMND) = RTRIM(@CMND))
-    SET @KHFound = 1;
 
--- INSERT trong distributed tran riêng — không có LINK1 query
-BEGIN DISTRIBUTED TRANSACTION;
-INSERT INTO TaiKhoan(...) VALUES(...);
-COMMIT TRANSACTION;
-```
-Deploy lên cả SQL1 và SQL2.
+-- PHASE 1: Đọc local + LINK1, lưu vào biến (KHÔNG có write ở đây)
+IF EXISTS (SELECT 1 FROM KhachHang WHERE CMND=@CMND) SET @KHFound = 1;
+ELSE IF EXISTS (SELECT 1 FROM [LINK1].NGANHANG.dbo.KhachHang WHERE CMND=@CMND) SET @KHFound = 1;
 
-**2. Sửa route `taikhoan.js`:**
-- POST `/taikhoan/mo` luôn gọi `execSPAdmin` (sqlcmd) thay vì `execSP` (tedious) — vì SP nay dùng `BEGIN DISTRIBUTED TRANSACTION`, tedious không hỗ trợ MSDTC.
-- Dùng `queryAdminSQL` thay vì `getAdminPool` trực tiếp cho `getAllKhachHang()` và GET `/taikhoan` (ChiNhanh) — có retry tự động khi pool bị lỗi.
+IF @KHFound = 0
+BEGIN
+    RAISERROR(N'Không tìm thấy khách hàng.', 16, 1); RETURN;
+END
 
-**3. Tăng cường connection pool resilience (`db.js`):**
-- Thêm `isPoolDead()`: kiểm tra pool `connected` + `_closed` trước khi reuse.
-- Thêm `isSessionKilled()`: nhận diện lỗi kill state / connection closed / socket error.
-- Retry logic (1 lần) trong `execSP`, `querySQL`, `queryAdminSQL`: xóa pool chết → tạo mới → thử lại.
-- Hàm mới `queryAdminSQL`: admin pool query với retry (thay cho dùng `getAdminPool` trực tiếp).
-
-**4. `start.bat` — tự kill process cũ:**
-```bat
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3001.*LISTENING"') do (
-    taskkill /F /PID %%a >nul 2>&1
-)
+-- PHASE 2: Distributed tran TƯỜNG MINH — scope chỉ chứa write, không có LINK1 query
+SET XACT_ABORT ON;
+BEGIN TRY
+    BEGIN DISTRIBUTED TRANSACTION;
+    INSERT INTO TaiKhoan(...) VALUES(...);
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;
+    THROW;
+END CATCH
 ```
 
-**Bài học rút ra (rất hay bị hỏi vấn đáp):**
-> Khi bảng có Merge Replication trigger (`MSmerge_ins_*`, `MSmerge_upd_*`, `MSmerge_del_*`), **không được** query Linked Server cùng scope với INSERT/UPDATE/DELETE lên bảng đó mà không có distributed transaction tường minh. Query LINK1 tạo implicit distributed tran → conflict với trigger → session bị kill. **Giải pháp chuẩn:** đọc LINK1 trước, lưu kết quả vào biến, rồi write trong `BEGIN DISTRIBUTED TRANSACTION` riêng (scope chỉ chứa write).
+Đi kèm ở tầng app:
+- Route `taikhoan.js` gọi qua `execSPAdmin` (sqlcmd) thay vì `execSP` (tedious).
+- `db.js` bổ sung `isPoolDead()` + `isSessionKilled()` + retry 1 lần để hồi phục pool khi replication làm bay session.
+
+**Bài học (rất hay bị hỏi vấn đáp về CSDL phân tán):**
+> Khi bảng có **Merge Replication trigger** (`MSmerge_ins/upd/del_*`), **không được** query Linked Server **cùng scope** với INSERT/UPDATE/DELETE lên bảng đó — trừ khi đã bọc bằng `BEGIN DISTRIBUTED TRANSACTION` tường minh. Query Linked Server tạo **implicit distributed tran** ngầm định → conflict với merge trigger → session bị kill.
+>
+> **Nguyên tắc thiết kế SP phân tán trong hệ thống này:**
+> 1. Đọc dữ liệu qua LINK trước, lưu vào biến.
+> 2. Mở `BEGIN DISTRIBUTED TRANSACTION` tường minh.
+> 3. Trong distributed tran chỉ chứa **write** (INSERT/UPDATE/DELETE), không đọc LINK.
+> 4. `COMMIT` sớm nhất có thể.
 
 ---
 
-## Sự cố 6: Dữ liệu TRACUU (SQL3) không đồng bộ sau khi migration
-
-**Triệu chứng:**
-Sau khi chạy migration đổi MANV trên SQL1+SQL2, trang danh sách nhân viên (nhóm NganHang) vẫn hiển thị `NV01`, `NV02`... thay vì `BT001`, `TD001`. Một số nhân viên mất khỏi danh sách, một số bị trùng hoặc sai chi nhánh.
-
-**Nguyên nhân gốc rễ:**
-SQL3 là **Subscriber** của Replication. Các lệnh `UPDATE NhanVien SET MANV = ...` chạy trực tiếp trên SQL1/SQL2 (Publisher) nhưng **Replication Agent không propagate kịp** (hoặc đã tạm dừng). SQL3 còn giữ snapshot cũ.
-
-Thêm vào đó, dữ liệu demo trên SQL1 và SQL2 dùng **CMND trùng nhau** cho các nhân viên "cùng người" xuất hiện ở cả 2 chi nhánh (ví dụ: BT001 và TD001 cùng CMND `0123456789`). Bảng `NhanVien` trên SQL3 có ràng buộc `UNIQUE KEY` trên `CMND`, nên chỉ lưu được 1 trong 2 → thiếu bản ghi.
-
-**Cách xử lý đã áp dụng:**
-1. Chạy `UPDATE NhanVien SET MANV = 'BTxxx' WHERE RTRIM(MANV) = 'NVxx' AND MACN = 'BENTHANH'` trực tiếp trên SQL3.
-2. Đổi CMND của nhân viên TANDINH sang giá trị khác trên SQL2 (ví dụ `TD001.CMND = '0123456001'` thay vì `'0123456789'`), sau đó INSERT thủ công bản ghi còn thiếu vào SQL3.
-3. UPDATE CMND trên SQL3 để khớp với SQL2.
-
-**Bài học rút ra:**
-> Khi chạy migration data trên Publisher, cần kiểm tra Subscriber ngay sau đó. Nếu Replication chậm hoặc có conflict, cần can thiệp thủ công trên Subscriber. Dữ liệu demo không nên dùng CMND trùng cho các nhân viên khác nhau ở các chi nhánh.
-
----
-
-## Sự cố 12: Thông báo lỗi tiếng Việt bị lỗi font (mojibake) khi rút/gửi/chuyển tiền [14/07/2026]
+## Sự cố 6 — Race condition khi 2 NV cùng lúc mở tài khoản (SOTK trùng)
 
 **Triệu chứng:**
 ```
-Msg 50000, Level 16, State 1, Server ES-HAITD16\SQL1, Procedure sp_RutTien, Line 85
-S? du kh?ng d? d? r?t.
+Msg 2627, Level 14, State 1
+Violation of PRIMARY KEY constraint 'PK_TaiKhoan'. Cannot insert duplicate key
+in object 'dbo.TaiKhoan'. The duplicate key value is (BT0000009).
 ```
-Thay vì hiển thị đúng "Số dư không đủ để rút." — mọi ký tự có dấu bị thay bằng `?`.
+Xảy ra khi 2 nhân viên (VD: BT001 và BT002) cùng lúc click "Mở tài khoản" trong khoảng vài ms.
 
 **Nguyên nhân gốc rễ:**
-Các giao dịch dùng `BEGIN DISTRIBUTED TRANSACTION` (gửi/rút/chuyển tiền, mở TK...) phải gọi qua `sqlcmd` thay vì driver `mssql`/tedious (xem Sự cố 4). Nhưng `sqlcmd`, khi xuất kết quả ra **stdout/stderr** (pipe mà Node.js `execFile` đọc), mặc định dùng **bảng mã OEM của Windows console** (codepage 437/850) — không có ký tự tiếng Việt có dấu, nên tự thay bằng `?`. Chỉ khi `sqlcmd` ghi ra **file** (`-o <file>`) kèm cờ `-f 65001` (UTF-8) thì output mới đúng — đây là hành vi đặc thù, không áp dụng khi output đi qua stdout/pipe.
+Trước fix, SOTK được sinh ở **tầng app** (`sinhSOTK()` trong `routes/taikhoan.js`):
+```javascript
+// ❌ Race condition
+const maxRow = await queryAdminSQL(server, "SELECT MAX(SOTK) FROM TaiKhoan WHERE SOTK LIKE 'BT%'");
+const newSOTK = 'BT' + String(Number(maxRow[0].max.slice(2)) + 1).padStart(7, '0');
+await execSPAdmin(server, 'sp_MoTaiKhoan', { SOTK: newSOTK, ... });
+```
+2 NV đọc cùng `MAX = BT0000008` → cùng gán `BT0000009` → cùng INSERT → 1 thành công, 1 dính PK violation. Đây là **check-then-act race** kinh điển — logic sinh SOTK và INSERT không nằm trong 1 atomic operation.
 
-**Cách xử lý đã áp dụng:**
-Sửa hàm `execSPAdmin` trong [`db.js`](../APP_NGANHANG/db.js): thay vì đọc trực tiếp `stdout`/`stderr` của `execFile`, cho `sqlcmd` ghi ra file tạm (`-o <tempfile> -f 65001`), sau đó Node đọc lại file đó bằng `fs.readFileSync(..., 'utf8')`, bỏ BOM, rồi xóa file tạm. Đồng thời lọc bỏ dòng header kỹ thuật `Msg ###, Level ##, State ##, Server ..., Procedure ..., Line ##` mà `sqlcmd` tự thêm vào trước nội dung `RAISERROR` thật, chỉ giữ lại câu thông báo gốc.
+**Cách xử lý** *(fix #3)*:
+Move logic sinh SOTK vào SP. SP dùng vòng WHILE retry tối đa 5 lần: mỗi lần đọc `MAX(SOTK)` + `@Attempt` rồi INSERT trong distributed tran; PK duplicate → ROLLBACK, tăng `@Attempt`, thử SOTK khác. Prefix `BT`/`TD` lấy theo `@MACN` (chi nhánh sở hữu TK), không phụ thuộc server chạy SP.
 
-**Bài học rút ra:**
-> Khi bọc `sqlcmd` bằng `child_process.execFile` trong Node.js để hỗ trợ MSDTC, không được tin vào `stdout`/`stderr` cho dữ liệu Unicode — phải ép output ra file UTF-8 (`-o file -f 65001`) rồi đọc lại file. Áp dụng cho MỌI lời gọi `sqlcmd` xử lý text tiếng Việt, không riêng gì thông báo lỗi.
+```sql
+WHILE @Attempt < @MaxAttempt
+BEGIN
+    SELECT TOP 1 @Max = SOTK FROM TaiKhoan WHERE SOTK LIKE @Prefix + '%' ORDER BY SOTK DESC;
+    SET @Num  = ISNULL(CAST(SUBSTRING(RTRIM(@Max), 3, 7) AS INT), 0) + 1 + @Attempt;
+    SET @SOTK = @Prefix + RIGHT('0000000' + CAST(@Num AS VARCHAR(7)), 7);
+
+    BEGIN TRY
+        BEGIN DISTRIBUTED TRANSACTION;
+        INSERT INTO TaiKhoan(SOTK, CMND, SODU, MACN, NGAYMOTK) VALUES(@SOTK, ...);
+        COMMIT TRANSACTION;
+        SELECT @SOTK AS SOTK; RETURN;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        IF ERROR_NUMBER() IN (2627, 2601) SET @Attempt = @Attempt + 1;
+        ELSE BEGIN RAISERROR(ERROR_MESSAGE(), 16, 1); RETURN; END
+    END CATCH
+END
+```
+
+Route parse SOTK mới từ output text của `sqlcmd` bằng regex `/\b(?:BT|TD)\d{7}\b/`.
+
+**Bài học:**
+> Khi sinh khoá tự tăng bên ngoài SQL, luôn có nguy cơ race. Có 3 cách chuẩn để xử lý:
+> 1. **Đưa vào atomic scope** (giải pháp áp dụng ở đây): sinh key trong SP + retry PK violation.
+> 2. Dùng `IDENTITY` hoặc `SEQUENCE`: đơn giản nhất, nhưng đề bài đã ràng buộc format `BT0000009` (prefix chi nhánh) nên không dùng được.
+> 3. Distributed lock (`sp_getapplock`): overkill cho scenario này.
 
 ---
 
-## Sự cố 13: Chạy lại script phân quyền làm mất toàn bộ đăng nhập hệ thống [14/07/2026]
+## Sự cố 7 — Chuyển nhân viên về chi nhánh cũ bị chặn (UQ_NhanVien_CMND soft-delete)
 
 **Triệu chứng:**
-Sau khi chạy lại `sql/setup/04_Role_PhanQuyen.sql` để thu hẹp quyền `KhachHang` (fix TC-09a — xem ghi chú trong `11_Security_Authorization.md`), **không ai đăng nhập được nữa** — kể cả `admin`, `BT001`, các Login KhachHang. Lỗi cụ thể: `The EXECUTE permission was denied on the object 'sp_Login_App'`.
+```
+Msg 2627, Level 14, State 1
+Violation of UNIQUE KEY constraint 'UQ_NhanVien_CMND'.
+Cannot insert duplicate key in object 'dbo.NhanVien'.
+The duplicate key value is (0999999001).
+Msg 1206: The Microsoft Distributed Transaction Coordinator (MS DTC) has cancelled the distributed transaction.
+```
+Xảy ra khi chuyển NV từ BT → TD, nhưng trước đây NV này đã từng làm ở TD (bị soft-delete `TrangThaiXoa=1`).
 
 **Nguyên nhân gốc rễ:**
-Bản cũ của script dùng `DROP ROLE` + `CREATE ROLE` để "làm sạch" quyền trước khi cấp lại. `DROP ROLE` trong SQL Server xóa **toàn bộ member** của role (phải `sp_droprolemember` hết mới DROP được) — role tạo lại sau đó là role **rỗng**, không tự động gán lại user nào. Toàn bộ user (đã tồn tại như database principal, không bị mất) chỉ đơn giản **rớt khỏi mọi role**, mất hết quyền kể cả quyền `EXECUTE sp_Login_App` cần cho bước đăng nhập.
+Constraint `UQ_NhanVien_CMND` **không phân biệt `TrangThaiXoa`** — 1 CMND chỉ được tồn tại 1 bản ghi trong bảng, bất kể đã soft-delete hay chưa. `sp_ChuyenNhanVien` bản cũ luôn `INSERT` bản ghi mới tại chi nhánh đích → vi phạm UQ khi CMND đã có bản soft-delete cũ. DTC bị hủy → cả 2 site rollback.
 
-Sự cố còn lộ ra 1 lỗ hổng khác: file script chạy trên **SQL3 (TRACUU)** bị dừng giữa chừng (do lỗi `GRANT ... ON GD_CHUYENTIEN` — bảng này không tồn tại local trên TRACUU) → 2 phần cấp quyền còn lại (`NganHang`, `KhachHang`) **chưa từng chạy được trên SQL3**, để lại role rỗng hoàn toàn trên server này.
+**Cách xử lý** *(fix RF‑A)*:
+Bổ sung **resurrect logic**: query LINK1 tìm NV cùng CMND tại đích. 3 nhánh:
+1. **Không có** bản ghi cùng CMND → sinh MANV mới + INSERT như cũ.
+2. **Có** + `TrangThaiXoa=1` (soft-delete) → **UPDATE ngược** (`TrangThaiXoa=0`), giữ nguyên MANV cũ + thông tin cũ. Đảm bảo lịch sử GD (`GD_GOIRUT`, `GD_CHUYENTIEN`) tham chiếu qua MANV cũ vẫn liên tục.
+3. **Có** + `TrangThaiXoa=0` (đang active) → RAISERROR ngay lập tức, vì dữ liệu sai (1 NV không được active tại 2 chi nhánh cùng lúc).
 
-**Cách xử lý đã áp dụng:**
-1. Khôi phục lại role member trên cả 4 server bằng `sp_addrolemember`, map theo quy ước đặt tên (`admin`→NganHang, `BT*/TD*/NV*`→ChiNhanh, còn lại dạng số/CMND→KhachHang) — đối chiếu với `sql/setup/09/10/11_TaoTaiKhoan*.sql` để xác nhận đúng quy ước.
-2. Chạy bù 2 đoạn GRANT còn thiếu (`NganHang`, `KhachHang`) riêng trên SQL3.
-3. Viết lại toàn bộ `04_Role_PhanQuyen.sql` theo hướng an toàn — xem chi tiết ở `11_Security_Authorization.md` mục 3b (không `DROP ROLE`, `REVOKE` động thay vì tái tạo, `IF OBJECT_ID` guard cho từng GRANT theo bảng).
+SP trả cột `IsResurrect bit` để app phân biệt kịch bản.
 
-**Bài học rút ra (rất quan trọng — tự nhắc bản thân khi vấn đáp):**
-> `DROP ROLE`/`CREATE ROLE` không phải cách an toàn để "reset quyền" — nó xóa cả **membership**, không chỉ **permission**. Muốn reset sạch quyền của 1 role mà giữ nguyên user đang thuộc role đó, phải `REVOKE` từng quyền (hoặc REVOKE động qua `sys.database_permissions`), không được DROP/CREATE lại principal. Ngoài ra: khi 1 script T-SQL nhiều batch (`GO`) chạy qua `sqlcmd -b`, lỗi ở 1 batch có thể khiến các batch sau **không chạy** — luôn kiểm tra kết quả trên TẤT CẢ server sau khi deploy, không giả định script chạy trọn vẹn chỉ vì không thấy lỗi ở lần check đầu.
+```sql
+-- Phát hiện bản ghi tại đích
+SELECT @EXIST_MANV = RTRIM(MANV), @EXIST_TRANGTHAI = TrangThaiXoa
+FROM [LINK1].NGANHANG.dbo.NhanVien WHERE RTRIM(CMND) = RTRIM(@CMND);
+
+IF @EXIST_MANV IS NOT NULL AND @EXIST_TRANGTHAI = 0
+BEGIN RAISERROR(N'NV cùng CMND đang làm việc tại chi nhánh đích.', 16, 1); RETURN; END
+
+IF @EXIST_MANV IS NOT NULL AND @EXIST_TRANGTHAI = 1
+BEGIN SET @IsResurrect = 1; SET @MANV_MOI = @EXIST_MANV; END   -- giữ MANV cũ
+```
+
+**Bài học:**
+> Với dữ liệu soft-delete, constraint UNIQUE cần được thiết kế cẩn thận. Có 2 hướng:
+> 1. **Giữ UNIQUE toàn cục** (giải pháp áp dụng ở đây) + tại tầng SP xử lý resurrect. Ưu điểm: đơn giản schema, không có 2 bản ghi cùng CMND. Nhược điểm: SP phức tạp hơn.
+> 2. **UNIQUE filtered** (`UNIQUE ... WHERE TrangThaiXoa=0`): chỉ ràng buộc trên bản active. Ưu điểm: SP đơn giản (chỉ INSERT). Nhược điểm: có thể tồn tại nhiều bản soft-delete cùng CMND → phức tạp khi tra cứu lịch sử.
+> Với hệ thống banking, hướng 1 an toàn hơn vì đảm bảo 1 người luôn chỉ có 1 record NV tại 1 chi nhánh.
 
 ---
 
-## Sự cố 14: `Invalid object name 'TaiKhoan'` khi NganHang xem sao kê 1 tài khoản cụ thể [14/07/2026]
+## Sự cố 8 — Guard nghiệp vụ ở tầng route Node.js dễ bị bypass (defense-in-depth)
 
 **Triệu chứng:**
-Đăng nhập `admin` (role `NganHang`) → Sao kê GD → chọn 1 số tài khoản cụ thể (VD `BT0000001`) → báo lỗi `Invalid object name 'TaiKhoan'`. Chọn "Tất cả tài khoản" thì không lỗi.
+Route `POST /taikhoan/dong` (bản cũ) làm 3 việc: check SODU, check GD, DELETE TK. Nếu ai đó **bypass ứng dụng**, truy cập DB trực tiếp qua SSMS/sqlcmd/SP khác và chạy `DELETE FROM TaiKhoan WHERE SOTK=...` → không có bất kỳ guard nào chặn → mất consistency (TK có GD_GOIRUT nhưng bảng TaiKhoan trống → orphan FK, breaks joins downstream).
+
+Tương tự, `SP_SaoKeTaiKhoan` bản cũ không kiểm ownership → khách hàng `1111111111` login SSMS, gọi `EXEC SP_SaoKeTaiKhoan @SOTK='TD0000001'` → xem được sao kê của khách hàng khác (`4444444444`).
 
 **Nguyên nhân gốc rễ:**
-`NganHang` luôn có `effectiveServer = 'TRACUU'` (xem `auth.js`). Route `baocao.js` khi có chọn `SOTK` sẽ gọi `SP_SaoKeTaiKhoan` trên `server` (tức TRACUU cho NganHang). Nhưng `SP_SaoKeTaiKhoan` ([`06_SP_SaoKeTaiKhoan.sql`](../sql/stored_procedures/06_SP_SaoKeTaiKhoan.sql)) được thiết kế **chỉ chạy trên chi nhánh (SQL1/SQL2)** — đọc `TaiKhoan`, `GD_GOIRUT`, `GD_CHUYENTIEN` **local** (chỉ dùng LINK1 để lấy GD của chi nhánh đối tác). TRACUU không có local các bảng này (theo đúng kiến trúc phân tán) → SP crash ngay dòng `FROM TaiKhoan`.
+**Nguyên tắc "single line of defense" ở tầng app không đủ**. Trong CSDL phân tán với nhiều điểm truy cập (SSMS ở admin, LINK từ site khác, script tự động), guard **phải nằm ở tầng SQL** — càng gần dữ liệu càng an toàn.
 
-Nhánh "Tất cả tài khoản" không lỗi vì nó gọi `sp_SaoKeToanBo` — SP khác, được thiết kế riêng để chạy trên TRACUU (đọc qua LINK1+LINK2).
+**Cách xử lý:**
 
-**Cách xử lý đã áp dụng:**
-Sửa route `baocao.js`: khi `server === 'TRACUU'` và có chọn `SOTK`, mượn tạm `spServer = 'BENTHANH'` để gọi `SP_SaoKeTaiKhoan` thay vì gọi trên TRACUU. Vẫn ra đủ dữ liệu vì `TaiKhoan` nhân bản toàn vẹn giữa SQL1/SQL2, còn GD thì SP tự đọc Local + LINK1 nên tài khoản thuộc chi nhánh nào cũng lấy đủ lịch sử.
+**Case A (Đóng TK — RF-B):** tạo `SP_DongTaiKhoan` với 5 guard SQL-side:
+- G1: TK tồn tại
+- G2: `SODU = 0`
+- G3: cùng CN với NV (`MACN_TK = MACN_NV`)
+- G4: không có `GD_GOIRUT` (local + LINK1)
+- G5: không có `GD_CHUYENTIEN` (local + LINK1)
 
-**Bài học rút ra:**
-> Một SP được thiết kế cho 1 nhóm site cụ thể (ở đây là "chi nhánh có local TaiKhoan/GD") không thể gọi mù quáng bằng biến `server` chung của session — phải xác định đúng server phù hợp với giả định của SP đó, đặc biệt với role `NganHang` luôn có `effectiveServer` khác với các role còn lại.
+Route giờ chỉ còn forward call: `execSPAdmin(server, 'SP_DongTaiKhoan', { SOTK, MANV })`.
+
+**Case B (Sao kê — fix #8):** thêm check `SUSER_SNAME()` trong SP:
+```sql
+IF IS_ROLEMEMBER('KhachHang') = 1
+BEGIN
+    IF RTRIM(@CMND_TK) <> RTRIM(SUSER_SNAME())
+    BEGIN RAISERROR(N'Bạn không có quyền xem sao kê tài khoản này.', 16, 1); RETURN; END
+END
+```
+`SUSER_SNAME()` trả về SQL login name của phiên hiện tại. Với role `KhachHang`, login name = CMND — nên đối chiếu trực tiếp với `CMND` chủ TK.
+
+**Bài học (rất core cho vấn đáp):**
+> **Defense in depth** — bảo mật nhiều lớp. Không đặt niềm tin duy nhất vào tầng app: 1 bug ở middleware, 1 kịch bản bypass, 1 SP nội bộ gọi sai → mất consistency ngay. Guard SQL-side là lớp cuối cùng, chậm hơn nhưng không thể bị vượt qua.
+>
+> **Áp dụng trong hệ thống:**
+> - `SP_DongTaiKhoan` — guard SODU/GD/same-branch tại SQL.
+> - `SP_SaoKeTaiKhoan` — check ownership qua `SUSER_SNAME()`.
+> - `sp_TaiKhoanKhachHang` — tự lọc `WHERE CMND = @CMND` (@CMND lấy từ session).
+> - `sp_ChuyenTien` — atomic `WHERE SODU >= @SOTIEN`.
+
+---
+
+## Sự cố 9 — MSDTC overhead khi thao tác nội bộ chi nhánh
+
+**Triệu chứng:**
+Latency cao khi gửi/rút/chuyển tiền **cùng chi nhánh** (TK + NV cùng MACN). Log cho thấy mỗi giao dịch phải:
+1. Đăng ký giao dịch với MSDTC (2 round-trip).
+2. Two-phase commit (prepare + commit).
+
+Ngay cả khi không có thao tác remote nào (không đụng LINK1) → vẫn phát sinh MSDTC overhead.
+
+**Nguyên nhân gốc rễ:**
+`sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien` bản cũ **luôn** dùng `BEGIN DISTRIBUTED TRANSACTION` bất kể TK có ở cùng CN với NV hay không. MSDTC-based 2PC là bắt buộc khi transaction phủ ≥ 2 resource manager (LINK1), nhưng khi tất cả thao tác đều local thì đây là overhead không cần thiết.
+
+**Cách xử lý** *(fix #6)*:
+Rẽ nhánh transaction theo `@IsLocal`:
+```sql
+DECLARE @IsLocal bit = 0;
+IF @MACN_TK = @MACN_NV SET @IsLocal = 1;
+
+BEGIN TRY
+    IF @IsLocal = 1
+    BEGIN
+        BEGIN TRANSACTION;                 -- Local tran, KHÔNG cần MSDTC
+        UPDATE TaiKhoan SET SODU = SODU + @SOTIEN WHERE ...;
+    END
+    ELSE
+    BEGIN
+        BEGIN DISTRIBUTED TRANSACTION;     -- 2PC qua MSDTC
+        UPDATE [LINK1].NGANHANG.dbo.TaiKhoan SET SODU = SODU + @SOTIEN WHERE ...;
+    END
+
+    INSERT INTO GD_GOIRUT(...) VALUES(...);
+    COMMIT TRANSACTION;
+END TRY
+```
+
+**Bài học:**
+> Distributed Transaction là công cụ mạnh nhưng đắt. Chỉ dùng khi thực sự cần phối hợp write giữa ≥ 2 site. Trong hệ thống này, phần lớn giao dịch (>70% workload thực tế) là cùng chi nhánh — nên rẽ nhánh là tối ưu quan trọng.
+
+---
+
+## Sự cố 10 — Merge Replication lag khi test E2E hoặc UI vừa cập nhật
+
+**Triệu chứng:**
+Vừa tạo TK `TD0000005` trên SQL2 (chi nhánh TANDINH), lập tức chạy query `SELECT ... FROM TaiKhoan WHERE SOTK='TD0000005'` trên SQL1 → **không tìm thấy**. Vài giây / vài chục giây sau mới xuất hiện.
+
+Trong test E2E Playwright, `SP_DongTaiKhoan @SOTK='TD0000005', @MANV='BT001'` chạy trên SQL1 báo `Tài khoản không tồn tại` (đúng logic — TK chưa được replicate về SQL1) → test flaky.
+
+**Nguyên nhân gốc rễ:**
+`TaiKhoan` được thiết lập replicate **full via merge replication**. Merge Agent chạy theo schedule (mặc định polling 1 phút), không đồng bộ tức thì như snapshot/DTC. Đây là **đặc điểm nội tại** của merge replication — không phải lỗi.
+
+**Cách xử lý:**
+
+**Với ứng dụng thực tế:** Chấp nhận eventual consistency. UX không hiển thị TK mới tạo ở chi nhánh khác trong vài giây đầu. Nhân viên tạo TK sẽ thấy TK ngay lập tức tại chi nhánh mình (đọc local).
+
+**Với test E2E:** Poll đợi merge sync trước khi assert:
+```js
+let synced = false;
+for (let i = 0; i < 30; i++) {
+    const cnt = Number((await sql('SQL1', `SELECT COUNT(*) FROM TaiKhoan WHERE SOTK='${sotk}'`))[0][0]);
+    if (cnt > 0) { synced = true; break; }
+    await new Promise(r => setTimeout(r, 1000));
+}
+```
+
+**Nếu cần lower lag:** giảm interval của Merge Agent trong SQL Server Replication Monitor (thấp nhất ~10s), hoặc trigger manually: `EXEC sp_startmergesynchronizationjob @publication='...'`. Không nên push xuống < 5s vì tăng tải CPU + network.
+
+**Bài học:**
+> Merge Replication cho **eventual consistency** — chấp nhận lag thay đổi cho tính available. Nếu cần strong consistency (đọc ngay sau write), dùng distributed transaction (như `sp_ChuyenTien` khi cross-branch) hoặc pattern read-your-own-writes (đọc local trước, sync về sau).
+>
+> Trong hệ thống này:
+> - **Đọc TK theo SOTK** → có thể lag vài giây.
+> - **Đọc số dư** → có thể lag → nên đọc từ chi nhánh sở hữu (SOTK prefix quyết định site).
+> - **Chuyển tiền** → dùng DTC → strong consistency ngay lập tức tại site sở hữu, replica cập nhật sau.

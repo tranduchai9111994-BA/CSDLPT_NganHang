@@ -1,49 +1,55 @@
-# Kiến Trúc Phần Mềm & Cấu Trúc Giao Diện
+# Kiến Trúc Phần Mềm
 
-Ứng dụng theo mô hình **MVC** bằng Node.js + Express.js.
+Ứng dụng theo mô hình **MVC** trên Node.js + Express.js. Tầng dữ liệu là **4 SQL Server instance** phân tán.
 
 | Tầng | Công nghệ | Vai trò |
 |------|-----------|---------|
-| View | EJS (Embedded JavaScript) | Render HTML động từ dữ liệu server |
-| Controller | Express Router (`routes/*.js`) | Điều phối request, gọi DB |
-| Model | `db.js` + SQL Server | Pool kết nối, SP, query |
-| Database | SQL Server 4 instance | NGUON, BENTHANH, TANDINH, TRACUU |
+| View | EJS (Embedded JavaScript) + `express-ejs-layouts` | Render HTML động từ dữ liệu server |
+| Controller | Express Router (`APP_NGANHANG/routes/*.js`) | Điều phối request, gọi tầng DB |
+| Model | `APP_NGANHANG/db.js` + Stored Procedures | Pool kết nối, thực thi SP/SQL, retry |
+| Database | 4 SQL Server instance | NGUON / BENTHANH / TANDINH / TRACUU |
 
 ---
 
-## 1. Luồng MVC Điển Hình
+## 1. Luồng Request Điển Hình
 
 ```
 [Browser] GET/POST /path
     │
     ▼
-[app.js] — Express entry point
-    ├─ express-session (đọc/ghi req.session.user)
-    ├─ express-ejs-layouts (render layout.ejs bọc ngoài view con)
-    ├─ Middleware: requireLogin (kiểm tra req.session.user)
-    └─ Middleware: requireRole('NhanVien','ChiNhanh',...) → HTTP 403 nếu sai nhóm
+[app.js] — Express entry point (cổng 3001)
+    ├─ express-session               (đọc/ghi req.session.user — chứa USERNAME, PASSWORD, NHOM, MACN, SERVER)
+    ├─ express-ejs-layouts           (layout.ejs bọc ngoài view con)
+    ├─ Middleware: requireLogin      (kiểm tra req.session.user)
+    ├─ Middleware: requireRole(...)  (HTTP 403 nếu NHOM không nằm trong danh sách)
+    └─ Middleware: requireChiNhanh / requireNganHang  (bảo vệ route ghi)
     │
     ▼
 [routes/*.js] — Controller
-    ├─ getServer(req)  →  req.session.user.SERVER ('BENTHANH'/'TANDINH'/'TRACUU')
-    ├─ querySQL(req, serverKey, sql, params)    — raw SELECT/DELETE
-    ├─ execSP(req, serverKey, spName, params)   — SP thông thường (tedious)
-    ├─ execSPAdmin(serverKey, spName, params)   — SP có Distributed Tran (sqlcmd)
-    └─ querySP(req, serverKey, spName, params)  — SP + trả về recordset
+    ├─ getServer(req)                              → req.session.user.SERVER (BENTHANH/TANDINH/TRACUU)
+    ├─ querySQL(req, serverKey, sql, params)       — raw SELECT/INSERT/UPDATE/DELETE qua per-user pool
+    ├─ execSP(req, serverKey, spName, params)      — SP thông thường qua per-user pool (tedious driver)
+    ├─ querySP(req, serverKey, spName, params)     — SP + trả về recordset
+    ├─ execSPAdmin(serverKey, spName, params)      — SP có Distributed Transaction qua sqlcmd (admin login HTKN)
+    ├─ queryAdminSQL(serverKey, sqlStr, params)    — raw SQL qua admin pool (dùng khi cần LINK1, có retry)
+    └─ getAdminPool(serverKey)                     — pool admin HTKN (dùng cho DDL: CREATE LOGIN, DROP LOGIN)
     │
     ▼
 [db.js] — Pool Manager
-    ├─ getPool(req, serverKey)      → pool[serverKey_username]  (per-user SQL Auth)
-    └─ getAdminPool(serverKey)      → pool admin HTKN            (DDL: CREATE LOGIN)
+    ├─ getPool(req, serverKey)      → pools[serverKey_username]  (per-user SQL Auth)
+    ├─ getAdminPool(serverKey)      → adminPools[serverKey]      (dùng login HTKN)
+    ├─ isPoolDead(pool)             — kiểm tra pool.connected + pool._closed
+    ├─ isSessionKilled(err)         — nhận diện lỗi kill state / connection closed / socket error
+    └─ Retry logic (1 lần)          — pool chết → xóa cache → tạo mới → thử lại
     │
     ▼
 [SQL Server] — Thực thi
     ├─ Local query / SP
-    └─ Linked Server [LINK1] / MSDTC nếu giao dịch liên site
+    └─ Linked Server [LINK1] / MSDTC nếu SP có BEGIN DISTRIBUTED TRANSACTION
     │
     ▼
 [routes/*.js] — Nhận kết quả
-    └─ res.render('view/file', { data })  hoặc  res.redirect('/path?success=...')
+    └─ res.render('view/file', { data }) hoặc res.redirect('/path?success=...')
     │
     ▼
 [views/*.ejs] — Render HTML → trả về Browser
@@ -54,26 +60,31 @@
 ## 2. Cấu Trúc Thư Mục
 
 ```
-APP_NGANHANG/
-├── app.js              — Khởi tạo Express, mount routes, middleware toàn cục
-├── db.js               — Connection pools, hàm querySQL/execSP/execSPAdmin
-├── setup_db.js         — Deploy SP và schema lúc khởi động (gọi 1 lần)
-├── routes/
-│   ├── auth.js         — Đăng nhập / Đăng xuất (SQL Auth + sp_Login_App)
-│   ├── khachhang.js    — CRUD Khách hàng
-│   ├── nhanvien.js     — CRUD Nhân viên + Chuyển chi nhánh
-│   ├── taikhoan.js     — Mở/Đóng tài khoản
-│   ├── giaodich.js     — Gửi / Rút / Chuyển tiền
-│   ├── baocao.js       — Sao kê, Liệt kê
-│   └── quantri.js      — Tạo SQL Login, Phân quyền
-└── views/
-    ├── layout.ejs      — Master page: Header, menu trái (ẩn/hiện theo NHOM)
-    ├── login.ejs
-    ├── khachhang/      — list.ejs, form.ejs
-    ├── nhanvien/       — list.ejs, form.ejs
-    ├── taikhoan/       — list.ejs, form.ejs
-    ├── giaodich/       — goirut.ejs, chuyentien.ejs
-    └── baocao/         — lietke.ejs, saoke.ejs
+D:/CSDLPT_NganHang/
+├── APP_NGANHANG/
+│   ├── app.js              — Express entry: session, middleware, mount routes
+│   ├── db.js               — Connection pools + execSP/execSPAdmin/queryAdminSQL/...
+│   ├── setup_db.js         — Deploy SP/schema lúc khởi động (gọi 1 lần khi npm start)
+│   ├── routes/
+│   │   ├── auth.js         — Đăng nhập / Đăng xuất
+│   │   ├── khachhang.js    — CRUD KH + fan-out CREATE LOGIN
+│   │   ├── nhanvien.js     — CRUD NV + Chuyển CN + Phục hồi
+│   │   ├── taikhoan.js     — Mở / Đóng tài khoản (cross-branch aware)
+│   │   ├── giaodich.js     — Gửi / Rút / Chuyển tiền (đều qua execSPAdmin)
+│   │   ├── baocao.js       — Sao kê, Liệt kê KH, Liệt kê TK
+│   │   └── quantri.js      — Tạo Login, Đổi role, Reset password
+│   ├── views/
+│   │   ├── layout.ejs      — Master page: header + sidebar (ẩn/hiện theo NHOM)
+│   │   ├── login.ejs
+│   │   ├── khachhang/ nhanvien/ taikhoan/ giaodich/ baocao/ quantri/
+│   └── package.json
+├── sql/
+│   ├── setup/              — Schema + roles + demo accounts (chạy trên từng instance)
+│   ├── stored_procedures/  — Source code SP (nguồn sự thật cho SP)
+│   ├── deploy_tracuu.sql   — SP đặc thù chạy trên SQL3 (dùng LINK1/LINK2)
+│   └── ...
+├── doc/                    — Toàn bộ tài liệu (file này)
+└── README.md
 ```
 
 ---
@@ -81,7 +92,6 @@ APP_NGANHANG/
 ## 3. Middleware Phân Quyền (`app.js`)
 
 ```javascript
-// Middleware — chạy TRƯỚC khi vào route handler
 function requireLogin(req, res, next) {
   if (!req.session.user) return res.redirect('/login');
   next();
@@ -95,31 +105,57 @@ function requireRole(...roles) {
   };
 }
 
-// Mount — thứ tự middleware quan trọng
+// Route ghi (thêm/sửa/xóa) — chỉ ChiNhanh; chặn NganHang
+function requireChiNhanh(req, res, next) {
+  if (req.session.user.NHOM !== 'ChiNhanh')
+    return res.status(403).render('error', { message: 'Chỉ nhân viên chi nhánh mới có quyền.' });
+  next();
+}
+
+// Mount routes
 app.use('/khachhang', requireLogin, requireRole('NganHang','ChiNhanh'), khRouter);
-app.use('/giaodich',  requireLogin, requireRole('NganHang','ChiNhanh'), gdRouter);
+app.use('/nhanvien',  requireLogin, requireRole('NganHang','ChiNhanh'), nvRouter);
 app.use('/taikhoan',  requireLogin, requireRole('NganHang','ChiNhanh','KhachHang'), tkRouter);
+app.use('/giaodich',  requireLogin, requireRole('NganHang','ChiNhanh'), gdRouter);
 app.use('/baocao',    requireLogin, requireRole('NganHang','ChiNhanh','KhachHang'), bcRouter);
 app.use('/quantri',   requireLogin, requireRole('NganHang'), qtRouter);
 ```
 
 **3 lớp bảo vệ phối hợp:**
-1. **Middleware** (`requireRole`) → chặn HTTP request trái phép → HTTP 403
-2. **SQL Role** (GRANT/DENY) → chặn ngay tại DB nếu ai kết nối trực tiếp SSMS
-3. **UI** (EJS `if`) → ẩn menu không có quyền → UX tốt hơn
+1. **Middleware** (`requireRole`) → chặn HTTP request trái phép → HTTP 403.
+2. **DB Role** (`GRANT/DENY`) → chặn ngay tại DB nếu ai đó kết nối trực tiếp qua SSMS.
+3. **UI** (`<% if user.NHOM ... %>`) → ẩn menu không có quyền → UX tốt hơn.
 
 ---
 
-## 4. Render Layout — Master Page
+## 4. Sự Khác Biệt Cốt Lõi Của App Này So Với Web Thông Thường
 
-File `views/layout.ejs` là khung chung. Mọi trang con được nhúng vào `<%- body %>`:
+| Đặc điểm | Web thông thường | App này |
+|---|---|---|
+| Kết nối DB | 1 pool chung dùng tài khoản service | Pool riêng theo **từng SQL Login người dùng** (`db.js:getPool`) |
+| Xác thực | Bảng `users` trong DB, hash mật khẩu | **SQL Server Authentication trực tiếp** — Login/Password đúng chuẩn SQL Server |
+| Audit trail | App tự log bằng cột `created_by` | SQL Server tự log qua `LOGIN_NAME()` — chính xác đến từng người |
+| Distributed Transaction | Hiếm khi dùng | **6 SP dùng `BEGIN DISTRIBUTED TRAN`** qua `sqlcmd` để đi qua MSDTC |
+| Multi‑server | Không | 4 instance, `db.js` chọn đúng server theo `session.SERVER` |
+| Report tính toán | Backend/frontend tính | **Tính tại SQL Server** bằng Window Function |
+| Phân quyền | 1 tầng (backend) | **3 tầng** (DB Role + Middleware + UI) |
+
+---
+
+## 5. Render Layout — Master Page
+
+`views/layout.ejs` là khung chung. Mọi trang con nhúng vào `<%- body %>`. Menu ẩn/hiện theo `user.NHOM`:
 
 ```html
-<!-- layout.ejs lược giản -->
 <nav>
   <% if (['ChiNhanh','NganHang'].includes(user.NHOM)) { %>
     <a href="/khachhang">Khách hàng</a>
+    <a href="/nhanvien">Nhân viên</a>
     <a href="/giaodich">Giao dịch</a>
+    <a href="/baocao">Báo cáo</a>
+  <% } %>
+  <% if (user.NHOM === 'KhachHang') { %>
+    <a href="/baocao/saoke">Sao kê</a>
   <% } %>
   <% if (user.NHOM === 'NganHang') { %>
     <a href="/quantri">Quản trị</a>
@@ -128,16 +164,7 @@ File `views/layout.ejs` là khung chung. Mọi trang con được nhúng vào `<
 <main><%- body %></main>
 ```
 
-Menu ẩn/hiện theo `user.NHOM` đọc từ `res.locals.user` (được gán trong `app.js`).
-
----
-
-## 5. Điểm Khác Biệt Với App Web Thông Thường
-
-| Đặc điểm | App thông thường | App này |
-|-----------|-----------------|---------|
-| Kết nối DB | 1 pool chung, tài khoản service | Pool riêng theo từng SQL Login người dùng |
-| Xác thực | Bảng users trong DB | SQL Server Authentication trực tiếp |
-| Distributed Transaction | Không | `BEGIN DISTRIBUTED TRANSACTION` + MSDTC qua sqlcmd |
-| Multi-server | Không | 4 instance, chọn đúng server theo chi nhánh user |
-| Audit trail | App tự ghi log | SQL Server tự ghi theo LOGIN_NAME() |
+Biến `user` được inject vào `res.locals` trong `app.js`:
+```javascript
+app.use((req, res, next) => { res.locals.user = req.session.user || null; next(); });
+```

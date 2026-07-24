@@ -497,6 +497,25 @@ AS
 BEGIN
     SET NOCOUNT ON;  -- Tắt thông báo đếm dòng ảnh hưởng
 
+    -- BƯỚC 0: Defense in depth — KhachHang chỉ được xem TK của chính mình
+    -- Trên TRACUU không có TaiKhoan local → verify qua LINK1/LINK2
+    -- SUSER_SNAME() trả về tên SQL login đang gọi SP (KH dùng CMND làm login name)
+    IF IS_ROLEMEMBER('KhachHang') = 1
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM [LINK1].NGANHANG.dbo.TaiKhoan
+            WHERE RTRIM(SOTK) = RTRIM(@SOTK) AND RTRIM(CMND) = RTRIM(SUSER_SNAME())
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM [LINK2].NGANHANG.dbo.TaiKhoan
+            WHERE RTRIM(SOTK) = RTRIM(@SOTK) AND RTRIM(CMND) = RTRIM(SUSER_SNAME())
+        )
+        BEGIN
+            RAISERROR(N'Bạn không có quyền xem sao kê tài khoản này.', 16, 1);
+            RETURN;
+        END
+    END
+
     -- BƯỚC 1: Lấy số dư hiện tại của TK — thử LINK1 (BENTHANH) trước, không có thì thử LINK2 (TANDINH)
     DECLARE @SODU_HIENTAI MONEY;
     SELECT @SODU_HIENTAI = SODU FROM [LINK1].NGANHANG.dbo.TaiKhoan WHERE SOTK = @SOTK;

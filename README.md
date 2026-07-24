@@ -1,83 +1,90 @@
-# 🏦 Đồ Án Quản Lý Ngân Hàng - CSDL Phân Tán
+# 🏦 Đồ Án Quản Lý Ngân Hàng — CSDL Phân Tán
 
-Hệ thống Quản lý Ngân Hàng mô phỏng hoạt động thực tế với kiến trúc **Cơ sở dữ liệu phân tán (Distributed Database)** trên SQL Server và nền tảng Web Application xây dựng bằng Node.js. 
+Hệ thống Quản lý Ngân Hàng mô phỏng hoạt động thực tế với kiến trúc **Cơ sở dữ liệu phân tán (Distributed Database)** trên SQL Server, kết hợp Web Application xây dựng bằng Node.js + Express.
 
-Hệ thống đảm bảo tính toàn vẹn dữ liệu (ACID) tuyệt đối trong môi trường phân tán (thông qua MSDTC), áp dụng các kỹ thuật tối ưu hóa truy vấn nâng cao (Window Functions) và quản trị bảo mật sát với thực tế bằng SQL Authentication.
+Hệ thống đảm bảo tính toàn vẹn dữ liệu (ACID) tuyệt đối trong môi trường phân tán thông qua **MSDTC (Two‑Phase Commit)**, áp dụng kỹ thuật tối ưu hóa truy vấn nâng cao (**Window Functions**) và quản trị bảo mật sát thực tế bằng **SQL Authentication** trực tiếp cho từng người dùng.
 
 ---
 
 ## 🏗️ Kiến Trúc Hệ Thống
 
-Dự án được phân mảnh thành 4 Site chính (Instance) trên SQL Server:
-1. **`NGUON` (Publisher)**: Lưu trữ dữ liệu gốc, phát hành Replication. Không trực tiếp phục vụ giao dịch.
-2. **`BENTHANH` (SQL1 - Phân mảnh 1)**: Xử lý giao dịch cho Chi nhánh Bến Thành.
-3. **`TANDINH` (SQL2 - Phân mảnh 2)**: Xử lý giao dịch cho Chi nhánh Tân Định.
-4. **`TRACUU` (SQL3 - Server Báo Cáo)**: Chứa bản hợp nhất của bảng Khách Hàng, phục vụ nhóm Ngân Hàng tra cứu toàn cục. 
+Dự án phân mảnh thành **4 SQL Server instance** trên cùng máy `ES-HAITD16`:
 
-Giao tiếp liên chi nhánh (chuyển tiền, sao kê) được thực hiện thông qua mạng lưới **Linked Server** an toàn.
+| Instance | Vai trò | Mô tả |
+|---|---|---|
+| `ES-HAITD16` (NGUON) | **Publisher / Distributor** | Chứa CSDL gốc, phát hành 3 Publication. Không phục vụ nghiệp vụ trực tiếp. |
+| `ES-HAITD16\SQL1` (BENTHANH) | **Subscriber — Chi nhánh 1** | Chứa dữ liệu phân mảnh `MACN='BENTHANH'`. Xử lý giao dịch Bến Thành. |
+| `ES-HAITD16\SQL2` (TANDINH) | **Subscriber — Chi nhánh 2** | Chứa dữ liệu phân mảnh `MACN='TANDINH'`. Xử lý giao dịch Tân Định. |
+| `ES-HAITD16\SQL3` (TRACUU) | **Subscriber — Trạm tra cứu** | Chỉ replicate bảng `KhachHang`. Phục vụ role `NganHang` tra cứu toàn cục. |
+
+Giao tiếp liên site được thực hiện qua mạng lưới **Linked Server** (LINK0/LINK1/LINK2) — xem [`doc/10_Linked_Servers.md`](doc/10_Linked_Servers.md).
 
 ---
 
 ## 🚀 Các Tính Năng Nổi Bật
 
-### 1. Phân Quyền Bảo Mật Sâu (SQL Authentication)
-- Thay vì dùng 1 tài khoản hệ thống (App Authentication), ứng dụng tạo kết nối CSDL bằng chính **SQL Login** của từng Nhân viên / Khách hàng.
-- Stored Procedure `sp_Login_App` map trực tiếp Login với người dùng thông qua `sys.database_principals` và `sys.database_role_members`.
-- 3 cấp độ Role:
-  - **NganHang**: Chỉ tra cứu, báo cáo. Không được thêm/xóa/sửa.
-  - **ChiNhanh**: Toàn quyền nghiệp vụ tại chi nhánh của mình.
-  - **KhachHang**: Chỉ xem được sao kê tài khoản của chính mình.
+### 1. Phân quyền bảo mật sâu — SQL Authentication theo từng người dùng
+- Ứng dụng KHÔNG dùng 1 tài khoản service chung. Mỗi người dùng đăng nhập bằng **SQL Login của chính họ** (ví dụ `BT001`, `TD001`, `1111111111`). `db.js` mở connection pool riêng theo `(serverKey, username)`.
+- 3 role cấp Database: **`NganHang`** (chỉ đọc + báo cáo toàn hệ thống), **`ChiNhanh`** (CRUD trên chi nhánh mình), **`KhachHang`** (chỉ EXECUTE 3 SP).
+- SP lõi `sp_Login_App` map Login → Role qua `sys.database_role_members` + `sys.database_principals`.
 
-### 2. Giao Dịch Chuyển Tiền Phân Tán (Distributed Transaction)
-- Giao dịch liên chi nhánh được bọc trong lệnh `BEGIN DISTRIBUTED TRAN` và `SET XACT_ABORT ON`.
-- Kích hoạt **MSDTC (Microsoft Distributed Transaction Coordinator)**, đảm bảo nguyên tắc Two-Phase Commit: Nếu đứt kết nối mạng giữa 2 chi nhánh, toàn bộ giao dịch tại 2 đầu tự động Rollback, không gây sai lệch dữ liệu.
+### 2. Giao dịch phân tán chuẩn 2‑Phase Commit
+- Các SP `sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien`, `sp_MoTaiKhoan`, `sp_ChuyenNhanVien`, `sp_PhucHoiNhanVien` đều dùng `BEGIN DISTRIBUTED TRANSACTION` + `SET XACT_ABORT ON` + `TRY/CATCH`.
+- MSDTC bảo đảm cộng/trừ ở 2 site cùng commit hoặc cùng rollback — không có "tiền mất tích".
+- Do driver `tedious` của Node.js không hỗ trợ MSDTC, các SP này được gọi qua **`sqlcmd`** (hàm `execSPAdmin` trong `db.js`).
 
-### 3. Tối Ưu Báo Cáo Sao Kê (Window Functions)
-- Giải quyết bài toán tính Số dư lũy kế mà không dùng vòng lặp (Cursor) hay JavaScript.
-- Kéo dữ liệu qua Linked Server kết hợp với **Window Functions (`SUM() OVER`)** của SQL Server để tự động tính lùi số dư đầu kỳ và số dư từng dòng giao dịch cực kỳ tối ưu.
+### 3. Tối ưu báo cáo Sao Kê bằng Window Functions
+- Kỹ thuật "**tính lùi số dư đầu kỳ**": lấy số dư hiện tại trừ đi tổng biến động sau `@TUNGAY`, tránh phải kéo toàn bộ lịch sử qua Linked Server.
+- Dùng `SUM(...) OVER (ORDER BY NGAYGD ROWS UNBOUNDED PRECEDING)` để tính số dư lũy kế trên 1 lần scan, không cần cursor.
 
-### 4. Giao Diện Chuẩn Master-Detail & Flexbox
-- Thiết kế **Master-Detail (SubForm)** trong nghiệp vụ Mở Tài Khoản.
-- Form Tạo Tài Khoản (Login) phân chia 2 cột an toàn tuyệt đối với mọi trình duyệt nhờ Pure CSS Flexbox.
+### 4. Bảo mật 3 tầng
+DB Role (`GRANT/DENY`) — Backend Middleware (`requireRole`) — UI (`if user.NHOM`). Kể cả khi user vượt qua UI hoặc middleware, DB Role vẫn chặn cứng ở tầng cuối.
 
 ---
 
 ## 💻 Cài Đặt Và Vận Hành
 
-### Yêu Cầu Môi Trường
-- **Node.js** (Phiên bản 14+ trở lên)
-- **SQL Server** (Đã cài đặt Replication và cấu hình đủ 4 Instances, bật MSDTC)
+### Yêu cầu môi trường
+- **Node.js** 14+
+- **SQL Server** 2019+ (đã cấu hình 4 instance NGUON/SQL1/SQL2/SQL3, đã bật MSDTC, đã cấu hình Replication + Linked Server)
 
-### Các Bước Chạy Ứng Dụng
-1. Clone dự án về máy.
-2. Di chuyển vào thư mục `APP_NGANHANG`:
-   ```bash
-   cd APP_NGANHANG
-   ```
-3. Cài đặt các gói thư viện cần thiết:
-   ```bash
-   npm install
-   ```
-4. Đảm bảo file cấu hình `db.js` có đúng tên Server (`ES-HAITD16`, `ES-HAITD16\SQL1`, v.v..) khớp với máy thực tế.
-5. Khởi động Web Server:
-   ```bash
-   npm start
-   ```
-6. Truy cập ứng dụng tại: `http://localhost:3001`
+### Các bước chạy ứng dụng
+```bash
+cd APP_NGANHANG
+npm install
+npm start
+```
+Truy cập: `http://localhost:3001`
+
+Đảm bảo `APP_NGANHANG/db.js` có đúng tên server (`ES-HAITD16`, `ES-HAITD16\SQL1`, `ES-HAITD16\SQL2`, `ES-HAITD16\SQL3`).
+
+Tài khoản demo: xem [`doc/03_DemoAccounts.md`](doc/03_DemoAccounts.md).
 
 ---
 
 ## 📚 Hệ Thống Tài Liệu Kỹ Thuật
 
-Bộ tài liệu chi tiết được đính kèm trong thư mục `/doc/` để giải thích ngọn ngành kiến trúc, quy trình xử lý sự cố và báo cáo bảo vệ:
-- `architecture.md`: Tổng quan kiến trúc MVC và cấu trúc file.
-- `database_diagram.md`: Sơ đồ ERD bằng Mermaid.
-- `database_schema.md`: Đặc tả các bảng và cấu trúc Stored Procedures.
-- `database_replication.md`: Thông số cấu hình Transactional Replication.
-- `database_connection.md` & `linked_servers.md`: Sơ đồ mạng lưới Linked Server và cách lấy Connection.
-- `security_authorization.md` & `Account.md`: Phân quyền chặt chẽ bằng SQL Authentication.
-- `modules_routing.md`: Đặc tả các module nghiệp vụ Node.js.
-- `Reports_Checklist.md`: Tiến độ thực hiện các chức năng báo cáo, sao kê.
-- `SP_Sync_Status.md`: Báo cáo giám sát hiện trạng đồng bộ SP.
-- `Su_Co_Va_Xu_Ly.md`: Các kịch bản và cách rà soát lỗi Database phức tạp.
-- `18_DanhGia_CoChePhanTan.md`: **Đánh giá cơ chế phân tán** — rà soát toàn bộ logic source code & DB (Linked Server, Replication, Stored Procedure, Phân quyền), chỉ ra các điểm đang xử lý bằng code thay vì theo cơ chế phân tán và đưa ra khuyến nghị xử lý (ưu tiên theo mức độ).
+Bộ tài liệu trong thư mục [`doc/`](doc/) — ưu tiên đọc theo thứ tự để chuẩn bị vấn đáp:
+
+| # | File | Nội dung |
+|---|------|----------|
+| 00 | [`00_DE3_NGAN_HANG_PhanTan.md`](doc/00_DE3_NGAN_HANG_PhanTan.md) | Đề bài gốc (Đề 3 — Ngân Hàng phân tán) |
+| 01 | [`01_DoiChieuDeBai.md`](doc/01_DoiChieuDeBai.md) | Checklist đối chiếu yêu cầu đề bài ↔ thực tế triển khai |
+| 02 | [`02_KichBanDemo.md`](doc/02_KichBanDemo.md) | Kịch bản demo trước hội đồng (8–12 phút) |
+| 03 | [`03_DemoAccounts.md`](doc/03_DemoAccounts.md) | Danh sách tài khoản demo (admin / BT* / TD* / KH) |
+| 04 | [`04_CauHoiVanDap.md`](doc/04_CauHoiVanDap.md) | **Bộ câu hỏi vấn đáp** (8 cụm chủ đề, ~50 câu) |
+| 05 | [`05_Architecture.md`](doc/05_Architecture.md) | Kiến trúc MVC, luồng request Browser → SQL |
+| 06 | [`06_Database_Diagram.md`](doc/06_Database_Diagram.md) | Sơ đồ ERD (Mermaid) + ràng buộc FK/UNIQUE |
+| 07 | [`07_Database_Schema.md`](doc/07_Database_Schema.md) | Đặc tả chi tiết các bảng + danh mục SP nghiệp vụ |
+| 08 | [`08_Database_Replication.md`](doc/08_Database_Replication.md) | **Replication** — Publisher/Subscriber, 3 tính chất phân mảnh, Publication–Article matrix |
+| 09 | [`09_Database_Connection.md`](doc/09_Database_Connection.md) | `db.js` — connection pool, `execSP` vs `execSPAdmin` |
+| 10 | [`10_Linked_Servers.md`](doc/10_Linked_Servers.md) | Cấu hình LINK0/LINK1/LINK2 + Security Mapping (`HTKN`) |
+| 11 | [`11_Security_Authorization.md`](doc/11_Security_Authorization.md) | Bảo mật 3 tầng: DB Role — Middleware — UI |
+| 12 | [`12_Modules_Routing.md`](doc/12_Modules_Routing.md) | Đặc tả từng route file (`auth`, `khachhang`, `nhanvien`, `taikhoan`, `giaodich`, `baocao`, `quantri`) |
+| 13 | [`13_All_Stored_Procedures.md`](doc/13_All_Stored_Procedures.md) | **Toàn bộ source code SP** kèm giải thích cơ chế phân tán |
+| 14 | [`14_Reports_Checklist.md`](doc/14_Reports_Checklist.md) | Checklist chức năng Liệt kê / Sao kê |
+| 17 | [`17_Su_Co_Va_Xu_Ly.md`](doc/17_Su_Co_Va_Xu_Ly.md) | Nhật ký sự cố CSDL phân tán tiêu biểu (ôn phản biện vấn đáp) |
+| 18 | [`18_DanhGia_CoChePhanTan.md`](doc/18_DanhGia_CoChePhanTan.md) | Đánh giá hiện trạng cơ chế phân tán — điểm đạt / chưa đạt |
+| 19 | [`19_TestCase_BaoVeDoAn.md`](doc/19_TestCase_BaoVeDoAn.md) | Bộ test case cho buổi bảo vệ |
+
+> 💡 **Ôn thi vấn đáp** — bắt đầu từ `04_CauHoiVanDap.md`, tham chiếu chéo `08_Database_Replication.md` và `13_All_Stored_Procedures.md` khi cần đi sâu.

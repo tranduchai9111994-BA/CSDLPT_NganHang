@@ -5,9 +5,6 @@ const { querySQL, queryAdminSQL, execSP, execSPAdmin, querySP, getAdminPool, sql
 
 function getServer(req) { return req.session.user.SERVER || 'BENTHANH'; }
 
-// Tiền tố SOTK theo chi nhánh — đảm bảo không trùng khóa khi đồng bộ liên site
-const MACN_PREFIX = { BENTHANH: 'BT', TANDINH: 'TD' };
-
 // KhachHang phân mảnh ngang → local chỉ có KH chi nhánh mình.
 // Dùng admin pool + LINK1 để lấy KH cả 2 chi nhánh cho form mở TK.
 async function getAllKhachHang(serverKey) {
@@ -19,18 +16,6 @@ async function getAllKhachHang(serverKey) {
     FROM [LINK1].NGANHANG.dbo.KhachHang
     ORDER BY MACN, HoTen
   `);
-}
-
-// Sinh số TK tự động: <prefix_chinhanh> + 7 chữ số (ví dụ BT0000001, TD0000001)
-async function sinhSOTK(req, serverKey, macn) {
-  const prefix = MACN_PREFIX[macn] || 'TK';
-  const rows = await querySQL(req, serverKey, `
-    SELECT TOP 1 SOTK FROM TaiKhoan WHERE SOTK LIKE @prefix ORDER BY SOTK DESC
-  `, { prefix: prefix + '%' });
-  if (rows.length === 0) return prefix + '0000001';
-  const last = rows[0].SOTK.trim();
-  const num  = parseInt(last.slice(prefix.length)) + 1;
-  return prefix + String(num).padStart(7, '0');
 }
 
 // GET /taikhoan – Danh sách tài khoản
@@ -76,6 +61,8 @@ router.get('/', async (req, res) => {
 });
 
 // GET /taikhoan/mo – Form mở tài khoản
+// SOTK KHÔNG còn được sinh ở tầng app — SP sp_MoTaiKhoan tự sinh atomic khi INSERT.
+// Form chỉ hiển thị placeholder "(Sẽ tự động sinh khi lưu)" — server bỏ qua giá trị SOTK trong body.
 router.get('/mo', async (req, res) => {
   const server = getServer(req);
   const user   = req.session.user;
@@ -83,48 +70,55 @@ router.get('/mo', async (req, res) => {
     return res.status(403).render('error', { message: 'Không có quyền.', layout: false });
   }
   try {
-    const sotk = await sinhSOTK(req, server, user.MACN);
     const khRows = await getAllKhachHang(server);
     res.render('taikhoan/form', {
-      sotk, khRows, macn: user.MACN, error: null
+      sotk: '(Sẽ tự động sinh khi lưu)', khRows, macn: user.MACN, error: null
     });
   } catch (err) {
-    res.render('taikhoan/form', { sotk: '', khRows: [], macn: user.MACN, error: err.message });
+    res.render('taikhoan/form', { sotk: '(Sẽ tự động sinh khi lưu)', khRows: [], macn: user.MACN, error: err.message });
   }
 });
 
 // POST /taikhoan/mo – Thực hiện mở TK
-// 2 FK trên TaiKhoan: FK_TaiKhoan_KhachHang (CMND) + FK_TaiKhoan_ChiNhanh (MACN).
-// KhachHang + ChiNhanh đều phân mảnh ngang → cả 2 FK chỉ thỏa trên server có KH.
-// Cross-branch: MACN = chi nhánh KH, INSERT trên server KH → TK replicate full sang.
+// SP sp_MoTaiKhoan tự sinh SOTK trong scope distributed tran (fix race condition).
+// Prefix theo @MACN (chi nhánh sở hữu TK): BENTHANH→BT, TANDINH→TD.
+// Cross-branch: MACN = chi nhánh KH → SP chạy trên server đó (FK_KhachHang thỏa local).
 router.post('/mo', async (req, res) => {
   const server = getServer(req);
   const user   = req.session.user;
   if (user.NHOM !== 'ChiNhanh') {
     return res.status(403).render('error', { message: 'Không có quyền.', layout: false });
   }
-  let { SOTK, CMND, SODU, KH_MACN } = req.body;
+  const { CMND, SODU, KH_MACN } = req.body;
   const khMacn = (KH_MACN || '').trim();
   const userMacn = (user.MACN || '').trim();
   const crossBranch = khMacn && khMacn !== userMacn;
   const MACN = crossBranch ? khMacn : userMacn;
   try {
-    SOTK = await sinhSOTK(req, server, userMacn);
-    const spParams = { SOTK, CMND, SODU: parseFloat(SODU) || 0, MACN };
-
-    // SP dùng BEGIN DISTRIBUTED TRANSACTION + query LINK1 → phải gọi qua sqlcmd
-    // Cross-branch: gọi trên server chi nhánh KH (FK_TaiKhoan_KhachHang)
-    // Cùng branch: gọi trên server đăng nhập
+    const spParams = { CMND, SODU: parseFloat(SODU) || 0, MACN };
+    // SP tự sinh SOTK trong distributed tran và SELECT trả về ở cuối.
+    // Chạy trên server sở hữu TK (server chi nhánh KH khi cross-branch, server NV khi cùng CN).
     const targetServer = crossBranch ? khMacn : userMacn;
-    await execSPAdmin(targetServer, 'sp_MoTaiKhoan', spParams);
-    res.redirect('/taikhoan?success=Mở tài khoản thành công');
+    const output = await execSPAdmin(targetServer, 'sp_MoTaiKhoan', spParams);
+
+    // Parse SOTK từ output text của sqlcmd. SOTK có format 'BTxxxxxxx' hoặc 'TDxxxxxxx'.
+    const sotkMatch = String(output).match(/\b(?:BT|TD)\d{7}\b/);
+    const newSOTK = sotkMatch ? sotkMatch[0] : null;
+
+    const msg = newSOTK
+      ? `Mở tài khoản thành công. Số tài khoản: ${newSOTK}`
+      : 'Mở tài khoản thành công';
+    res.redirect('/taikhoan?success=' + encodeURIComponent(msg));
   } catch (err) {
     const khRows = await getAllKhachHang(server);
-    res.render('taikhoan/form', { sotk: SOTK, khRows, macn: user.MACN, error: err.message });
+    res.render('taikhoan/form', { sotk: '(Sẽ tự động sinh khi lưu)', khRows, macn: user.MACN, error: err.message });
   }
 });
 
-// POST /taikhoan/dong – Đóng (xóa) tài khoản
+// POST /taikhoan/dong – Đóng (xóa) tài khoản.
+// Toàn bộ guard nghiệp vụ (SODU, GD_GOIRUT, GD_CHUYENTIEN, same-branch)
+// đã được đẩy vào SP_DongTaiKhoan (RF-B: defense-in-depth SQL-side).
+// Route chỉ check quyền + forward gọi SP.
 router.post('/dong', async (req, res) => {
   const server = getServer(req);
   const user = req.session.user;
@@ -133,28 +127,12 @@ router.post('/dong', async (req, res) => {
   }
   const { SOTK } = req.body;
   try {
-    // Kiểm tra số dư
-    const tkRows = await querySQL(req, server, `
-      SELECT SODU FROM TaiKhoan WHERE RTRIM(SOTK) = @sotk
-    `, { sotk: SOTK });
-    if (tkRows.length === 0) return res.redirect('/taikhoan?error=Tài khoản không tồn tại');
-    if (Number(tkRows[0].SODU) !== 0) {
-      return res.redirect('/taikhoan?error=Không thể đóng tài khoản có số dư khác 0. Vui lòng rút hết tiền trước.');
-    }
-
-    // Kiểm tra giao dịch
-    const gdRows = await querySQL(req, server, `
-      SELECT COUNT(*) AS cnt FROM GD_GOIRUT WHERE RTRIM(SOTK) = @sotk
-    `, { sotk: SOTK });
-    const ctRows = await querySQL(req, server, `
-      SELECT COUNT(*) AS cnt FROM GD_CHUYENTIEN WHERE RTRIM(SOTK_CHUYEN) = @sotk OR RTRIM(SOTK_NHAN) = @sotk
-    `, { sotk: SOTK });
-
-    if (gdRows[0].cnt > 0 || ctRows[0].cnt > 0) {
-      return res.redirect('/taikhoan?error=Không thể đóng tài khoản đã có giao dịch.');
-    }
-
-    await querySQL(req, server, `DELETE FROM TaiKhoan WHERE RTRIM(SOTK) = @sotk`, { sotk: SOTK });
+    // execSPAdmin vì SP query LINK1 để đếm GD_GOIRUT/GD_CHUYENTIEN ở site kia
+    // (guard G4/G5), pool user ChiNhanh thường không có quyền select LINK.
+    await execSPAdmin(server, 'SP_DongTaiKhoan', {
+      SOTK: SOTK,
+      MANV: user.MANV
+    });
     res.redirect('/taikhoan?success=Đã đóng tài khoản ' + SOTK);
   } catch (err) {
     res.redirect('/taikhoan?error=' + encodeURIComponent(err.message));

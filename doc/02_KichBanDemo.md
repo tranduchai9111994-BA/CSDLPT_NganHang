@@ -1,34 +1,45 @@
 # 🎬 Kịch Bản Demo — Đồ Án CSDL Phân Tán Ngân Hàng
 
-> **Thời lượng dự kiến:** 8–12 phút  
-> **Mục tiêu:** Show đủ các chức năng chính, nhấn mạnh phần phân tán + phân quyền.  
-> **Nguyên tắc:** Demo ĐÚNG THỨ TỰ, không nhảy lung tung. Mỗi bước ghi rõ dữ liệu test.
+> **Thời lượng dự kiến:** 8–12 phút
+> **Mục tiêu:** Show đủ các chức năng chính, nhấn mạnh phần **phân tán** (Distributed Transaction, Linked Server, Replication) + **phân quyền 3 role** (SQL Authentication).
+> **Nguyên tắc:** Demo đúng thứ tự, ghi rõ dữ liệu test trên giấy trước khi vào phòng.
 
 ---
 
 ## CHUẨN BỊ TRƯỚC KHI DEMO
 
 ### Checklist khởi động
-- [ ] 4 SQL Server instance đang chạy (NGUON, SQL1, SQL2, SQL3)
-- [ ] MSDTC đang chạy (services.msc → Distributed Transaction Coordinator → Running)
-- [ ] Đã chạy `npm start` trong thư mục APP_NGANHANG
-- [ ] Browser mở sẵn `http://localhost:3000`
-- [ ] Mở sẵn SSMS kết nối 4 instance (để show dữ liệu nếu giảng viên hỏi)
-- [ ] Ghi chú tài khoản test trên giấy (bên dưới)
+- [ ] 4 SQL Server instance đang chạy (`ES-HAITD16`, `SQL1`, `SQL2`, `SQL3`)
+- [ ] Dịch vụ **MSDTC** đang `Running` (services.msc → Distributed Transaction Coordinator)
+- [ ] Đã chạy `npm start` trong thư mục `APP_NGANHANG` (port `3001`)
+- [ ] Browser mở sẵn `http://localhost:3001`
+- [ ] Mở SSMS kết nối 4 instance (dùng khi giảng viên yêu cầu show dữ liệu thô)
+- [ ] Ghi tài khoản test ra giấy (xem dưới)
 
-### Tài khoản test (ghi ra giấy để không quên)
+### Tài khoản test
 
-| Mục đích | Login | Password | Server | Ghi chú |
+| Mục đích | Login | Password | Chi nhánh chọn | Server thực tế |
 |---|---|---|---|---|
-| Demo nhóm ChiNhanh (BT) | `BT001` | `1` | BENTHANH | Giao dịch viên Bến Thành |
-| Demo nhóm ChiNhanh (TD) | `TD001` | `1` | TANDINH | Giao dịch viên Tân Định |
-| Demo nhóm NganHang | `admin` | `1` | TRACUU | Ban Giám Đốc |
-| Demo nhóm KhachHang | (CMND KH mẫu) | (PIN tự đặt) | BENTHANH/TANDINH | Khách hàng |
+| Demo `ChiNhanh` — BENTHANH | `BT001` | `1` | BENTHANH | `ES-HAITD16\SQL1` |
+| Demo `ChiNhanh` — TANDINH | `TD001` | `1` | TANDINH | `ES-HAITD16\SQL2` |
+| Demo `NganHang` (Ban GĐ) | `admin` | `1` | (chọn CN nào cũng được) | `ES-HAITD16\SQL3` (auto‑fixed) |
+| Demo `KhachHang` | `1111111111` | `123456` | BENTHANH | `ES-HAITD16\SQL1` |
 
-> **Lưu ý:** LoginName = MANV (ví dụ `BT001` cho nhân viên Bến Thành #1, `TD002` cho Tân Định #2). NhanVien/Admin dùng mật khẩu `1`, KhachHang dùng mật khẩu `123456` — xem danh sách đầy đủ tại [`03_DemoAccounts.md`](03_DemoAccounts.md).
+> **Lưu ý ràng buộc:** LoginName của nhân viên = MANV (`BT001`/`TD001`...). LoginName của KhachHang = CMND (`1111111111`, `2222222222`...). Xem toàn bộ tài khoản demo tại [`03_DemoAccounts.md`](03_DemoAccounts.md).
 
-> ⚠️ **CẬP NHẬT:** Trước khi demo, mở SSMS kiểm tra SOTK và CMND mẫu thực tế trong DB.  
-> Ghi lại vào bảng này: SOTK_BT = _______, SOTK_TD = _______, CMND_KH = _______
+### Dữ liệu mẫu cần ghi lại trước
+
+Chạy trong SSMS trước khi demo:
+```sql
+-- Trên SQL1 (BENTHANH)
+SELECT TOP 5 SOTK, SODU, MACN FROM NGANHANG.dbo.TaiKhoan WHERE MACN='BENTHANH';
+-- Trên SQL2 (TANDINH)
+SELECT TOP 5 SOTK, SODU, MACN FROM NGANHANG.dbo.TaiKhoan WHERE MACN='TANDINH';
+```
+Ghi lại:
+- `SOTK_BT` (VD `BT0000001`) = _______
+- `SOTK_TD` (VD `TD0000001`) = _______
+- `CMND_BT` (VD `1111111111`) = _______
 
 ---
 
@@ -36,178 +47,187 @@
 
 ### Phần 0: Giới thiệu kiến trúc (1 phút)
 
-**Nói:** "Hệ thống gồm 4 SQL Server instance: NGUON là server gốc chứa data toàn cục, SQL1 là chi nhánh Bến Thành, SQL2 là Tân Định, SQL3 là server tra cứu. Dữ liệu được phân mảnh ngang theo mã chi nhánh. Giao tiếp giữa các mảnh qua Linked Server."
+> "Hệ thống gồm **4 SQL Server instance** trên cùng máy `ES-HAITD16`:
+> - `NGUON` là Publisher/Distributor chứa CSDL gốc.
+> - `SQL1` là chi nhánh **Bến Thành** (Subscriber).
+> - `SQL2` là chi nhánh **Tân Định** (Subscriber).
+> - `SQL3` là trạm **Tra cứu** dành cho Ban Giám Đốc.
+>
+> Dữ liệu được **phân mảnh ngang theo `MACN`** cho các bảng `KhachHang`, `NhanVien`, `GD_GOIRUT`, `GD_CHUYENTIEN`. Riêng `TaiKhoan` và `ChiNhanh` được **nhân bản toàn vẹn** trên cả 2 site chi nhánh. Giao tiếp giữa các mảnh dùng **Linked Server** — trong đó `LINK1` luôn trỏ đến chi nhánh đối tác."
 
-**Show (nếu cần):** Mở SSMS, show 4 instance trong Object Explorer.
+Show SSMS: 4 instance trong Object Explorer.
 
 ---
 
-### Phần 1: Login nhóm ChiNhanh — BENTHANH (1 phút)
+### Phần 1: Đăng nhập nhóm `ChiNhanh` — BENTHANH (1 phút)
 
 **Thao tác:**
-1. Mở `http://localhost:3000/login`
-2. Nhập: Username = `BT001`, Password = `1`, Chi nhánh = `BENTHANH`
+1. Mở `http://localhost:3001/login`
+2. Username = `BT001`, Password = `1`, Chi nhánh = `BENTHANH`
 3. Bấm Đăng nhập
 
-**Nói:** "Đăng nhập bằng SQL Authentication thật — hệ thống tạo connection pool trực tiếp bằng login/password của nhân viên, không dùng tài khoản hệ thống trung gian."
+> "Đăng nhập bằng **SQL Authentication thật**. `db.js` tạo connection pool trực tiếp bằng username/password của nhân viên — không dùng tài khoản service trung gian. Điều này đảm bảo SQL Server ghi nhận đúng `LOGIN_NAME()` cho mọi thao tác (audit trail)."
 
-**Kỳ vọng:** Vào trang chủ, menu trái hiển thị đủ: Khách hàng, Nhân viên, Tài khoản, Giao dịch, Báo cáo, Quản trị.
+Kỳ vọng: Vào trang chủ, menu trái hiển thị đủ Khách hàng / Nhân viên / Tài khoản / Giao dịch / Báo cáo.
 
 ---
 
 ### Phần 2: Thêm khách hàng mới (1 phút)
 
 **Thao tác:**
-1. Vào menu **Khách hàng** → bấm **Thêm**
-2. Nhập dữ liệu mẫu:
-   - CMND: `9999900001` (Hoặc nếu tạo Nhân Viên thì MANV sẽ được tự động sinh, ví dụ `BT001`, bạn không cần nhập tay).
-   - Họ: `Nguyễn Văn`
-   - Tên: `Demo`
+1. Menu **Khách hàng** → **Thêm**
+2. Điền form:
+   - Họ: `Nguyễn Văn`, Tên: `Demo`
    - Địa chỉ: `123 Lê Lợi, Q1`
-   - Phái: `Nam`
-   - Ngày cấp: `01/01/2020`
+   - Phái: `Nam`, Ngày cấp: `01/01/2020`
    - SĐT: `0901234567`
-3. Bấm **Ghi**
+   - CMND: `9999900001` (để trống Mã PIN → mặc định = CMND)
+3. **Ghi**
 
-**Nói:** "Khách hàng được thêm vào phân mảnh BENTHANH (SQL1). Sau khi Replication chạy, dữ liệu sẽ tự đồng bộ sang server TRACUU (SQL3) để nhóm Ngân Hàng tra cứu."
-
-**Kỳ vọng:** Thêm thành công, KH xuất hiện trong danh sách.
+> "KH được thêm vào phân mảnh BENTHANH (SQL1). Ngoài INSERT bảng `KhachHang`, route còn **fan‑out CREATE LOGIN + CREATE USER + Add Role trên cả 4 SQL instance** để KH có thể đăng nhập từ bất kỳ site nào (Login là đối tượng cấp Server, không có trong Replication). Sau đó Merge Replication tự đẩy record `KhachHang` sang TRACUU."
 
 ---
 
 ### Phần 3: Mở tài khoản cho KH vừa thêm (1 phút)
 
 **Thao tác:**
-1. Vào menu **Tài khoản**
-2. Chọn khách hàng vừa thêm (CMND: `9999900001`)
-3. Grid bên dưới hiển thị danh sách TK (ban đầu trống)
-4. Bấm **Thêm** → Số TK tự sinh, nhập số dư ban đầu: `1000000` (1 triệu)
-5. Bấm **Ghi**
+1. Menu **Tài khoản** → chọn KH `9999900001`
+2. Grid TK ban đầu trống → **Thêm TK**
+3. Số dư ban đầu: `1000000`. Bấm **Ghi**
 
-**Nói:** "Đây là giao diện Master-Detail theo yêu cầu đề bài. Master là thông tin KH, Detail là grid TK. Số TK được tự sinh bằng cách lấy MAX(SOTK) + 1."
+> "Đây là giao diện **Master‑Detail** theo yêu cầu đề bài. Số TK được tự sinh với prefix chi nhánh: `BT` cho BENTHANH → format `BT0000001`. SP `sp_MoTaiKhoan` chạy trong `BEGIN DISTRIBUTED TRANSACTION` vì bảng `TaiKhoan` có Merge Replication trigger — nếu commit thành công, Replication sẽ tự đồng bộ TK sang site đối tác."
 
-**Ghi lại:** SOTK vừa tạo = _______ (cần để demo gửi/rút/chuyển tiền)
+Ghi lại: SOTK vừa tạo = _______
 
 ---
 
 ### Phần 4: Gửi tiền (30 giây)
 
 **Thao tác:**
-1. Vào menu **Giao dịch** → **Gửi/Rút tiền**
-2. Chọn Tab **Gửi tiền**.
-3. Chọn TK vừa mở, Số tiền = `500000`
-4. Bấm thực hiện
+1. **Giao dịch** → **Gửi/Rút tiền** → Tab **Gửi tiền**
+2. Chọn TK vừa mở, Số tiền = `500000` → thực hiện
 
-**Nói:** "Số tiền gửi tối thiểu 100.000đ theo đề bài. SP sp_GuiTien kiểm tra điều kiện này."
+Kỳ vọng: Thành công. Số dư 1.000.000 → 1.500.000.
 
-**Kỳ vọng:** Thành công. Số dư tăng từ 1.000.000 lên 1.500.000.
+> "SP `sp_GuiTien` kiểm tra số tiền ≥ 100.000, đọc MACN của TK và MACN của NV để quyết định UPDATE local hay qua `[LINK1]`. Log `GD_GOIRUT` luôn ghi tại site NV thực hiện (phân mảnh theo NV)."
 
 ---
 
 ### Phần 5: Rút tiền — test lỗi (30 giây)
 
 **Thao tác:**
-1. Chuyển sang Tab **Rút tiền**.
-2. Rút tiền `50000` (dưới 100.000) → **Phải báo lỗi**
-3. Rút tiền `200000` → **Thành công**
+1. Tab **Rút tiền**
+2. Rút `50000` → **báo lỗi** (< 100.000)
+3. Rút `200000` → **thành công**
 
-**Nói:** "SP kiểm tra 2 điều kiện: số tiền >= 100.000 và số dư đủ. Nếu vi phạm sẽ ROLLBACK."
+> "SP `sp_RutTien` kiểm tra 2 điều kiện atomic trong 1 UPDATE: `WHERE SOTK=@SOTK AND SODU >= @SOTIEN`. Nếu `@@ROWCOUNT = 0` thì ROLLBACK."
 
 ---
 
-### Phần 6: Chuyển tiền liên chi nhánh ⭐ (2 phút — PHẦN QUAN TRỌNG NHẤT)
+### Phần 6: Chuyển tiền liên chi nhánh ⭐ (2 phút — QUAN TRỌNG NHẤT)
 
-**Đây là phần giảng viên quan tâm nhất vì thể hiện rõ CSDL Phân Tán.**
+Đây là phần thể hiện rõ nhất CSDL Phân Tán.
 
 **Thao tác:**
-1. Vào **Giao dịch** → **Chuyển tiền**
-2. TK chuyển: TK vừa mở ở BENTHANH (ghi ở bước 3)
-3. TK nhận: Một SOTK ở chi nhánh TANDINH (kiểm tra trước trong SSMS)
-4. Số tiền: `300000`
-5. Bấm thực hiện
+1. **Giao dịch** → **Chuyển tiền**
+2. TK chuyển: TK vừa mở ở BENTHANH
+3. TK nhận: `SOTK_TD` đã ghi (tài khoản TANDINH)
+4. Số tiền: `300000` → thực hiện
 
-**Nói:** "Đây là giao dịch phân tán. SP sp_ChuyenTien kiểm tra TK nhận có nằm ở local không, nếu không thì tìm qua LINK1 (Linked Server trỏ sang Tân Định). Giao dịch bọc trong BEGIN DISTRIBUTED TRANSACTION với SET XACT_ABORT ON. MSDTC đảm bảo Two-Phase Commit — nếu mất kết nối giữa chừng, cả 2 bên tự động Rollback."
+> "SP `sp_ChuyenTien` chạy trên SQL1. Nó đọc MACN của TK chuyển (`BENTHANH`) và MACN của TK nhận (`TANDINH`) — cả 2 đều có bản copy local vì `TaiKhoan` **nhân bản toàn vẹn**, không cần Linked Server để SELECT.
+>
+> Vì MACN khác nhau → SP quyết định UPDATE cộng tiền qua `[LINK1]` — LINK1 tại SQL1 trỏ SQL2. Toàn bộ nằm trong `BEGIN DISTRIBUTED TRANSACTION` + `SET XACT_ABORT ON`. **MSDTC** thực hiện **Two‑Phase Commit**: nếu đứt mạng giữa 2 site, cả 2 tự động ROLLBACK — không có tiền mất tích.
+>
+> Log `GD_CHUYENTIEN` ghi tại SQL1 (đúng mảnh theo NV thực hiện)."
 
-**Xác nhận (nếu giảng viên yêu cầu):** Mở SSMS → SQL2 (TANDINH) → query `SELECT SODU FROM TaiKhoan WHERE SOTK = 'xxx'` → số dư đã tăng.
+**Xác nhận SSMS:** `SELECT SODU FROM SQL2.NGANHANG.dbo.TaiKhoan WHERE SOTK='<TK_TD>'` → số dư đã tăng 300.000.
 
 ---
 
-### Phần 7: Đăng xuất → Login nhóm NganHang (1 phút)
+### Phần 7: Đăng xuất → Đăng nhập nhóm `NganHang` (1 phút)
 
 **Thao tác:**
 1. Đăng xuất
-2. Login: `admin` / `1` / Chi nhánh: `TRACUU`
+2. Login: `admin` / `1` / chi nhánh (chọn gì cũng được — `auth.js` tự gán `effectiveServer='TRACUU'`)
 
-**Nói:** "Nhóm NganHang đăng nhập vào server TRACUU. Họ có thể chọn bất kỳ chi nhánh nào để xem báo cáo nhưng không được thêm/sửa/xóa dữ liệu."
+> "Nhóm `NganHang` luôn kết nối server **TRACUU (SQL3)**. Ở tầng DB, role `NganHang` bị `DENY INSERT/UPDATE/DELETE` — kể cả gọi query trực tiếp qua SSMS cũng không thể sửa dữ liệu."
 
-**Kỳ vọng:** Menu chỉ có Báo cáo, Quản trị. Không có Giao dịch (hoặc nếu có thì bị khóa).
+Kỳ vọng: Menu chỉ có Báo cáo + Quản trị + xem danh sách KH/NV/TK (không có form ghi).
 
 ---
 
-### Phần 8: Xem sao kê tài khoản (1 phút)
+### Phần 8: Sao kê tài khoản (1 phút)
 
 **Thao tác:**
-1. Vào **Báo cáo** → **Sao kê**
-2. Nhập SOTK (dùng TK đã giao dịch ở trên)
-3. Chọn khoảng thời gian → Bấm xem
+1. **Báo cáo** → **Sao kê**
+2. Chọn SOTK vừa giao dịch → khoảng thời gian → **Xem**
 
-**Nói:** "SP_SaoKeTaiKhoan gom dữ liệu từ cả GD_GOIRUT và GD_CHUYENTIEN, tính số dư lũy kế bằng Window Functions (SUM OVER). Kỹ thuật 'tính lùi' giúp chỉ kéo dữ liệu trong khoảng thời gian yêu cầu qua Linked Server thay vì toàn bộ lịch sử."
+> "SP `SP_SaoKeTaiKhoan` (bản TRACUU) đọc `GD_GOIRUT` + `GD_CHUYENTIEN` từ cả `[LINK1]` (BENTHANH) và `[LINK2]` (TANDINH) vì TRACUU không có local các bảng GD.
+>
+> Kỹ thuật **'tính lùi số dư đầu kỳ'**: lấy số dư hiện tại trừ đi tổng biến động sau ngày yêu cầu → không cần kéo toàn bộ lịch sử qua Linked Server. Số dư lũy kế được tính bằng **Window Function** `SUM() OVER (ORDER BY NGAYGD ROWS UNBOUNDED PRECEDING)` — chỉ 1 lần scan, không cần cursor."
 
-**Kỳ vọng:** Bảng hiển thị: Số dư đầu | Ngày | Loại GD | Số tiền | Số dư sau.
+Kỳ vọng: Bảng 5 cột — Số dư đầu | Ngày | Loại GD | Số tiền | Số dư sau.
 
 ---
 
 ### Phần 9: Liệt kê KH / TK (30 giây)
 
 **Thao tác:**
-1. **Báo cáo** → **Liệt kê khách hàng** → show sắp xếp theo MACN, HO, TEN
-2. **Báo cáo** → **Liệt kê tài khoản** → chọn khoảng thời gian → show
+1. **Báo cáo** → **Liệt kê khách hàng** → sắp xếp `MACN, HO, TEN`
+2. **Báo cáo** → **Liệt kê tài khoản** → chọn khoảng thời gian
 
-**Nói:** "Nhóm NganHang có thể chọn xem theo chi nhánh cụ thể hoặc tất cả. Dữ liệu KH lấy từ TRACUU (đã replicate full), dữ liệu TK/GD lấy qua Linked Server."
+> "KH đọc trực tiếp từ TRACUU (KhachHang replicate full). TK đọc qua `[LINK1]` duy nhất — vì `TaiKhoan` nhân bản toàn vẹn nên LINK1 đã có đủ cả 2 chi nhánh, `UNION ALL` cả LINK1+LINK2 sẽ bị **duplicate x2**."
 
 ---
 
-### Phần 10: Login nhóm KhachHang (1 phút)
+### Phần 10: Đăng nhập nhóm `KhachHang` (1 phút)
 
 **Thao tác:**
 1. Đăng xuất
-2. Login bằng CMND khách hàng / PIN
+2. Login: `1111111111` / `123456`
 
-**Nói:** "Khách hàng chỉ thấy menu Sao kê. Nếu cố truy cập URL khác (ví dụ /khachhang) sẽ bị HTTP 403. Bảo mật 3 tầng: Database Role, Backend Middleware, UI ẩn menu."
+> "Khách hàng chỉ thấy menu **Sao kê**. Cố truy cập URL khác (VD `/khachhang`) → HTTP 403. Ở tầng DB, `KhachHang` không có `SELECT` trực tiếp trên bất kỳ bảng nào — chỉ được `EXECUTE` 3 SP: `sp_TaiKhoanKhachHang`, `SP_SaoKeTaiKhoan`, `sp_Login_App`. SP đóng vai trò cửa ngõ duy nhất."
 
-**Kỳ vọng:** Chỉ thấy form sao kê, chỉ xem được TK của mình.
+Kỳ vọng: Chỉ thấy form sao kê, dropdown chỉ có TK của chính KH này.
 
 ---
 
 ### Phần 11 (Bonus): Chuyển nhân viên (1 phút — nếu còn thời gian)
 
 **Thao tác:**
-1. Login lại `BT001` ở BENTHANH
-2. Vào **Nhân viên** → chọn 1 NV → bấm **Chuyển chi nhánh**
-3. Chọn chi nhánh mới: TANDINH
+1. Login lại `BT001` / `1` / BENTHANH
+2. **Nhân viên** → chọn 1 NV → **Chuyển chi nhánh** → TANDINH
 
-**Nói:** "Distributed Transaction: UPDATE TrangThaiXoa = 1 ở chi nhánh cũ, INSERT bản ghi mới qua LINK1 sang chi nhánh mới. Bản ghi cũ được giữ lại cho mục đích kiểm toán."
-
----
-
-## SAU KHI DEMO — SẴN SÀNG CHO VẤN ĐÁP
-
-Giảng viên thường hỏi ngay sau demo. Các câu hay gặp nhất (đã có đáp án ở `07_CauHoiVanDap.md`):
-
-1. "Chuyển tiền khác chi nhánh hoạt động thế nào?" → Cụm 7, câu 7.1
-2. "Mất mạng giữa chừng thì sao?" → Cụm 3, câu 3.4
-3. "LINK1 trỏ đến đâu?" → Cụm 2, câu 2.2
-4. "Tại sao bảng giao dịch không có MACN?" → Cụm 1, câu 1.3
-5. "Login có được Replication đồng bộ không?" → Cụm 5, câu 5.4
+> "SP `sp_ChuyenNhanVien` chạy trong `BEGIN DISTRIBUTED TRAN`:
+> 1. Sinh `MANV` mới với prefix chi nhánh đích (`TD00X`) — query qua `[LINK1]` để tìm MANV lớn nhất hiện có.
+> 2. UPDATE `TrangThaiXoa = 1` cho NV cũ tại local (giữ để audit).
+> 3. INSERT bản ghi mới qua `[LINK1]` với MANV mới + MACN mới + TrangThaiXoa = 0.
+>
+> MSDTC đảm bảo cả 2 bước cùng commit hoặc cùng rollback."
 
 ---
 
-## KỊCH BẢN DỰ PHÒNG — NẾU GẶP LỖI KHI DEMO
+## SAU KHI DEMO — CHUẨN BỊ VẤN ĐÁP
+
+Giảng viên thường hỏi ngay sau demo. Các câu hay gặp nhất (đáp án tại [`04_CauHoiVanDap.md`](04_CauHoiVanDap.md)):
+
+1. "Chuyển tiền khác chi nhánh hoạt động thế nào?" → Cụm 7 câu 7.1
+2. "Đứt mạng giữa 2 site trong lúc chuyển tiền → chuyện gì xảy ra?" → Cụm 3 câu 3.4
+3. "LINK1 trỏ đến đâu ở từng site?" → Cụm 2 câu 2.2
+4. "Tại sao bảng `GD_CHUYENTIEN`/`GD_GOIRUT` không có `MACN`?" → Cụm 1 câu 1.4
+5. "Login có được Replication đồng bộ không?" → Cụm 5 câu 5.4
+6. "`TaiKhoan` nhân bản toàn vẹn thay vì phân mảnh — vì sao?" → Cụm 1 câu 1.3
+7. "PUB_TRACUU chỉ có 1 article (`KhachHang`) — vậy TRACUU lấy `NhanVien`/`TaiKhoan` ở đâu?" → Cụm 5 câu 5.6
+
+---
+
+## KỊCH BẢN DỰ PHÒNG — Nếu gặp lỗi khi demo
 
 | Lỗi | Nguyên nhân có thể | Cách xử lý nhanh |
 |---|---|---|
-| Login failed | MSDTC chưa bật hoặc sai password | Mở services.msc → start MSDTC |
-| Chuyển tiền fail | Linked Server chưa cấu hình đúng | Show lỗi cho GV, giải thích đây là lỗi MSDTC |
-| App không chạy | Node.js chưa start | `cd APP_NGANHANG && npm start` |
-| Không thấy dữ liệu | Replication chưa sync | Show trên SSMS, giải thích có độ trễ |
-| SP báo lỗi khi chuyển NV | NV đã bị TrangThaiXoa = 1 | Chọn NV khác đang active |
+| `Login failed` khi đăng nhập | Sai password / Login chưa được cấp trên đúng server | Chạy lại `sql/setup/09..11_TaoTaiKhoan*.sql` |
+| Chuyển tiền fail với "MSDTC is unavailable" | MSDTC chưa bật hoặc chưa cấu hình network access | `services.msc` → Start MSDTC. Tường lửa cho phép port 135 + dynamic RPC |
+| App không chạy | Node process cũ đang giữ port 3001 | `start.bat` tự kill process cũ, hoặc `netstat -aon | findstr 3001` → `taskkill /F /PID <pid>` |
+| SP báo `Invalid object name 'NhanVien'` khi NganHang chọn TK cụ thể | Đang cố gọi SP dành cho chi nhánh trên TRACUU | Đã fix trong `baocao.js` — mượn `BENTHANH` để gọi `SP_SaoKeTaiKhoan` |
+| Không thấy dữ liệu mới sau khi thêm | Replication có độ trễ vài giây | Refresh sau 3–5s, hoặc show trực tiếp trên SSMS |
+| SP báo `session is in the kill state` | Query LINK1 nằm chung scope với INSERT bảng có Merge trigger | Đã fix trong `sp_MoTaiKhoan` — tách LINK1 query khỏi DTC scope |

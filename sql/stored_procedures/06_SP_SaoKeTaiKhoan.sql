@@ -16,6 +16,26 @@ BEGIN
     SET NOCOUNT ON;  -- Tắt thông báo "xx rows affected" để tăng hiệu suất
 
     -- =========================================================================================
+    -- BƯỚC 0: DEFENSE IN DEPTH — KH chỉ được xem sao kê TK của chính mình
+    -- Nếu caller thuộc role KhachHang → verify SOTK phải thuộc về SUSER_SNAME() (=CMND của KH).
+    -- SUSER_SNAME() trả về tên SQL login đang gọi SP (KH dùng CMND làm login name).
+    -- Chặn kịch bản KH gọi trực tiếp qua SSMS với SOTK người khác. Tầng app đã có
+    -- lớp bảo vệ tương tự, nhưng SP tự bảo vệ để không phụ thuộc duy nhất tầng app.
+    -- =========================================================================================
+    IF IS_ROLEMEMBER('KhachHang') = 1
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM TaiKhoan
+            WHERE RTRIM(SOTK) = RTRIM(@SOTK)
+              AND RTRIM(CMND) = RTRIM(SUSER_SNAME())
+        )
+        BEGIN
+            RAISERROR(N'Bạn không có quyền xem sao kê tài khoản này.', 16, 1);
+            RETURN;
+        END
+    END
+
+    -- =========================================================================================
     -- BƯỚC 1: KIỂM TRA TÀI KHOẢN TỒN TẠI VÀ LẤY SỐ DƯ HIỆN TẠI
     -- TaiKhoan được nhân bản full → luôn tồn tại local ở mọi site, chỉ cần đọc local.
     -- =========================================================================================

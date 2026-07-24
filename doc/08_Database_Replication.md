@@ -1,129 +1,250 @@
 # 🔄 Cơ Chế Phân Tán & Nhân Bản Dữ Liệu (Replication)
 
-Tài liệu này trình bày chi tiết về kiến trúc phân tán cơ sở dữ liệu (Distributed Database Architecture) được áp dụng trong hệ thống thông qua công nghệ **SQL Server Replication**.
+Tài liệu này đặc tả **kiến trúc phân tán CSDL** — Replication (Publisher/Subscriber), phân mảnh ngang theo `MACN`, ma trận Publication–Article, Distributed Transaction và Identity Range Management.
 
-## 1. Mô Hình Tổng Quan (Publisher - Subscriber)
+Đây là tài liệu **cốt lõi cho vấn đáp phần CSDL Phân Tán**. Đọc kèm [`10_Linked_Servers.md`](10_Linked_Servers.md) và [`13_All_Stored_Procedures.md`](13_All_Stored_Procedures.md).
 
-Hệ thống tuân theo mô hình Xuất bản - Đăng ký (Publisher - Subscriber) với 1 Server Gốc và 3 Server phân mảnh:
+---
 
-- **Publisher (Máy chủ xuất bản):** `ES-HAITD16` (thường gọi là mảnh NGUON). Đây là nơi chứa toàn bộ cơ sở dữ liệu gốc (nguyên thủy chưa phân mảnh), đồng thời có thể đóng vai trò là **Distributor** (Máy chủ phân phối) để quản lý và điều phối dữ liệu đồng bộ giữa các mảnh.
-- **Subscribers (Các máy chủ đăng ký / Phân mảnh):**
-  - `ES-HAITD16\SQL1` (Chi nhánh Bến Thành - Phân mảnh 1)
-  - `ES-HAITD16\SQL2` (Chi nhánh Tân Định - Phân mảnh 2)
-  - `ES-HAITD16\SQL3` (Phân mảnh Tra cứu - Phân mảnh 3)
+## 1. Mô Hình Publisher–Subscriber
 
-## 2. Tiêu Chí Phân Mảnh (Fragmentation Rules)
+| Vai trò | Instance | Chức năng |
+|---|---|---|
+| **Publisher + Distributor** | `ES-HAITD16` (NGUON) | Chứa CSDL gốc, phát hành 3 Publication, quản lý Distribution Agent |
+| Subscriber 1 | `ES-HAITD16\SQL1` (BENTHANH) | Chi nhánh Bến Thành — phân mảnh `MACN='BENTHANH'` |
+| Subscriber 2 | `ES-HAITD16\SQL2` (TANDINH) | Chi nhánh Tân Định — phân mảnh `MACN='TANDINH'` |
+| Subscriber 3 | `ES-HAITD16\SQL3` (TRACUU) | Trạm tra cứu — replicate full `KhachHang` |
 
-Cơ sở dữ liệu được áp dụng kỹ thuật **Phân mảnh ngang (Horizontal Fragmentation)** đối với hầu hết các bảng nghiệp vụ, dựa trên thuộc tính `MACN` (Mã chi nhánh).
+**Kiểu Replication:** Merge Replication (2 chiều — cho phép Subscriber cập nhật ngược về Publisher).
 
-### 2.1. Phân mảnh 1: Chi nhánh Bến Thành (SQL1)
-- **Điều kiện Lọc (Filter):** `MACN = 'BENTHANH'`
-- Dữ liệu ở các bảng `KhachHang`, `NhanVien`, `TaiKhoan`, `GD_GOIRUT`, `GD_CHUYENTIEN` chỉ chứa các dòng có mã chi nhánh là Bến Thành — áp dụng **phân mảnh ngang (horizontal fragmentation)** nhất quán theo `MACN`.
-- Bảng `ChiNhanh` được nhân bản toàn vẹn (Replicated entirely) vì là danh mục tham chiếu chỉ đọc, cần thiết cho mọi site.
+**Kiểu article cho Stored Procedure:** "**Replicate stored procedure definitions**" (đồng bộ **định nghĩa/code**), KHÔNG dùng "Replicate as execution". → Muốn sửa SP thì ALTER trên NGUON, snapshot mới sẽ đẩy code xuống Subscriber.
 
-### 2.2. Phân mảnh 2: Chi nhánh Tân Định (SQL2)
-- **Điều kiện Lọc (Filter):** `MACN = 'TANDINH'`
-- Tương tự SQL1, phân mảnh này chỉ chứa các dòng dữ liệu mà trường MACN là 'TANDINH' cho tất cả các bảng nghiệp vụ (bao gồm `TaiKhoan`).
+---
 
-### 2.3. Phân mảnh 3: Trạm Tra Cứu (SQL3)
-- **Chức năng:** Phục vụ nhóm quyền `NganHang` để xem báo cáo toàn hệ thống hoặc tra cứu khách hàng nhanh mà không làm ảnh hưởng đến hiệu năng (Performance) của các máy chủ đang xử lý giao dịch.
-- **Cấu hình:** Phân mảnh này KHÔNG phải là Full Copy của Publisher. Nó **chỉ Replicate Full bảng `KhachHang`** của toàn hệ thống để tối ưu hóa việc tra cứu. Các bảng giao dịch không cần replicate sang đây vì nhóm Ngân Hàng có thể dùng Linked Server gọi ngược lên `NGUON` hoặc chéo sang các mảnh để xem báo cáo.
+## 2. Ba Tính Chất Phân Mảnh (Completeness · Reconstruction · Disjointness)
 
-> ✅ **[Hiệu chỉnh 30/06/2026]** Xác nhận chính thức: bảng `TaiKhoan` được **nhân bản toàn vẹn (Replicate Full)** — giống bảng `ChiNhanh`. Mỗi site có đầy đủ toàn bộ tài khoản của cả 2 chi nhánh, phục vụ kiểm tra nhanh khi chuyển tiền. Quy tắc: **ĐỌC local, GHI qua Linked Server nếu TK thuộc chi nhánh khác** (phân biệt bằng MACN).
+Đây là 3 tính chất **bắt buộc** của một chiến lược phân mảnh đúng đắn. Chúng thường được hỏi trong vấn đáp — cần đối chiếu với từng bảng thực tế trong hệ thống.
 
-**Quy tắc đọc/ghi dữ liệu cho bảng nhân bản toàn vẹn (`ChiNhanh`):**
-- **Đọc (SELECT):** Đọc trực tiếp tại local (Subscriber) để tăng tốc độ truy vấn, không cần qua Linked Server.
-- **Ghi (INSERT/UPDATE/DELETE):** Chỉ thao tác qua Publisher (NGUON qua `LINK0`). TUYỆT ĐỐI không ghi trực tiếp lên bản nhân bản tại Subscriber vì sẽ bị Replication ghi đè ở chu kỳ đồng bộ kế tiếp.
+### 2.1. Tính đầy đủ (Completeness)
+> "Mọi bản ghi của quan hệ gốc phải thuộc về ít nhất một mảnh — không có bản ghi nào bị mất."
 
-**Quy tắc đọc/ghi cho `TaiKhoan` (nhân bản toàn vẹn):**
-- **Đọc (SELECT):** Đọc trực tiếp tại local — mọi TK đều có bản copy local, không cần Linked Server.
-- **Ghi (UPDATE số dư):** Chỉ GHI trực tiếp nếu TK có `MACN` = chi nhánh hiện tại (TK "của mình"). Nếu TK thuộc chi nhánh đối tác → bắt buộc GHI qua `[LINK1]` (Linked Server) để cập nhật tại site chủ sở hữu. SP `sp_ChuyenTien` phân biệt bằng cột `MACN`, kích hoạt `BEGIN DISTRIBUTED TRANSACTION` khi cần.
+Đối chiếu:
+- `KhachHang` — mọi KH có `MACN` ∈ {`BENTHANH`, `TANDINH`} → đều nằm ở SQL1 hoặc SQL2. **Đạt.**
+- `NhanVien` — tương tự. **Đạt.**
+- `GD_GOIRUT`, `GD_CHUYENTIEN` — mỗi GD được INSERT tại đúng site NV thực hiện → không GD nào bị thất thoát. **Đạt.**
+- `TaiKhoan`, `ChiNhanh` — nhân bản toàn vẹn (không phân mảnh) → **hiển nhiên đầy đủ**.
 
-**[Cập nhật Login Management] Bảng Quản Trị Hệ Thống (`QuanTriLogin`):**
-- Bảng này là một ngoại lệ. Nó tồn tại giống nhau trên mọi mảnh (SQL1, SQL2, SQL3) nhưng **KHÔNG tham gia vào Replication**. 
-- Dữ liệu mật khẩu lưu trên bảng này là cục bộ của từng instance, không cần và không được đồng bộ chéo giữa các site để tuân thủ nguyên tắc thiết kế phân tán của đề bài (Login/User là tài nguyên Server-level, không tự đồng bộ).
+### 2.2. Tính tái tạo (Reconstruction)
+> "Có thể ghép lại quan hệ gốc từ các mảnh bằng phép hợp/kết (union/join)."
 
-## 3. Cấu hình Publication & Subscriptions
+Đối chiếu:
+- Với các bảng phân mảnh ngang theo `MACN`: `<Bảng gốc> = <mảnh BENTHANH> UNION ALL <mảnh TANDINH>`.
+- Ứng dụng thực tế: các SP TRACUU (`sp_DanhSachNhanVien`, `sp_SaoKeToanBo`) đúng là dùng `UNION ALL [LINK1] ∪ [LINK2]` để tái tạo quan hệ toàn cục cho `NhanVien`, `GD_GOIRUT`, `GD_CHUYENTIEN`.
+- **Đạt.**
 
-Sau khi chuẩn bị xong, tiến hành cấu hình Merge Replication theo mô hình Publisher - Subscriber.
+### 2.3. Tính rời nhau (Disjointness)
+> "Với phân mảnh ngang, các mảnh phải rời nhau — không có bản ghi nào xuất hiện trong 2 mảnh cùng lúc."
 
-### 3.1. Article cấu hình cho từng Publication [Hiệu chỉnh 30/06/2026]
-Kiểu Replicate đã chọn cho Stored Procedures: **"Replicate stored procedure definitions"** (đồng bộ cấu trúc/code), KHÔNG dùng "Replicate as execution".
-- **PUB_BENTHANH và PUB_TANDINH:** Bảng: 6 bảng (ChiNhanh, GD_CHUYENTIEN, GD_GOIRUT, KhachHang, NhanVien, TaiKhoan). SP: 11 SP nghiệp vụ và quản trị.
-- **PUB_TRACUU:** Replicate sang SQL3 (TRACUU). Articles gồm:
-  - **Bảng:** `KhachHang` (replicate full toàn bộ — không filter theo MACN)
-  - **SP (replicate definition):** `sp_Login_App`, `SP_TaoTaiKhoan`, `sp_LietKeKhachHang`, `sp_LietKeTaiKhoanTheoNgay`, `sp_DanhSachTaiKhoan` — tổng 5 SP article
+Đối chiếu:
+- `KhachHang`, `NhanVien` — `MACN` là điều kiện lọc chặt (`MACN='BENTHANH'` XOR `MACN='TANDINH'`) → không giao. **Đạt.**
+- `GD_GOIRUT`, `GD_CHUYENTIEN` — mỗi GD chỉ INSERT tại 1 site (site NV thực hiện). **Đạt.**
+- **Ngoại lệ có chủ đích:** `TaiKhoan` và `ChiNhanh` **KHÔNG rời nhau** — cố tình nhân bản đầy đủ trên cả 2 CN. Đây là **replication toàn vẹn** (khác với phân mảnh) — nhằm cho phép mọi site tra cứu TK nhanh mà không cần Linked Server, đổi lại phải có quy tắc "ghi tại site sở hữu (MACN)" để không xung đột.
 
-  TRACUU không cần các bảng giao dịch hay NhanVien/TaiKhoan vì khi cần, SP dùng Linked Server (`LINK1`→SQL1, `LINK2`→SQL2) để lấy.
-  
-  **[Cập nhật 05/07/2026] Lưu ý TaiKhoan:** TaiKhoan replicate full (giống ChiNhanh) → mỗi site đã có đủ TK cả 2 CN. SP trên TRACUU chỉ đọc từ **LINK1** (không UNION ALL LINK1+LINK2 vì sẽ bị duplicate). JOIN KhachHang local dùng **OUTER APPLY TOP 1** để tránh nhân bản kết quả.
-  
-  Các SP đặc thù cài thủ công qua `setup_db.js` / [`sql/deploy_tracuu.sql`](../sql/deploy_tracuu.sql) (không qua Replication):
-  - `sp_SaoKeToanBo` — gộp GD_GOIRUT + GD_CHUYENTIEN từ LINK1+LINK2 (sao kê toàn hệ thống)
-  - `SP_SaoKeTaiKhoan` (bản TRACUU) — gộp GD_GOIRUT + GD_CHUYENTIEN từ LINK1+LINK2 (sao kê theo 1 SOTK)
-  - `sp_DanhSachNhanVien` — gộp NhanVien từ LINK1+LINK2
-  - `SP_DanhSachTrangThaiLogin` — phiên bản TRACUU đọc NhanVien qua LINK, KhachHang local
+> 💡 Lưu ý ôn vấn đáp: khi giảng viên hỏi "đảm bảo tính rời nhau", trả lời **theo từng bảng** — không nói chung "hệ thống em rời nhau" vì `TaiKhoan` không rời nhau theo đúng nghĩa (nó replicate).
 
-> ⚠️ **Hiện trạng SSMS:** Publication `PUB_TRACUU` hiện đang check tất cả 6 bảng — cần **bỏ check** các bảng ChiNhanh, GD_CHUYENTIEN, GD_GOIRUT, NhanVien, TaiKhoan, chỉ giữ lại KhachHang. Xem hướng dẫn sửa tại mục 3.2.
+---
 
-### 3.1.1. Quy trình deploy SP thay đổi qua Replication (PUB_TRACUU)
+## 3. Tiêu Chí Phân Mảnh Cụ Thể
 
-SP là article trong PUB_TRACUU → **không ALTER trực tiếp trên SQL3** (bị `MSmerge_tr_alterschemasonly` chặn). Quy trình đúng:
+### 3.1. SQL1 — Chi nhánh Bến Thành
+- **Filter Replication:** `MACN = 'BENTHANH'` cho `KhachHang`, `NhanVien`, `GD_GOIRUT`, `GD_CHUYENTIEN`.
+- **Không filter** (nhân bản toàn vẹn): `TaiKhoan`, `ChiNhanh`.
 
-1. Trên **NGUON (ES-HAITD16)**: `DISABLE TRIGGER [MSmerge_tr_alterschemaonly] ON DATABASE`
-2. `CREATE OR ALTER PROCEDURE dbo.sp_Login_App ...` (cập nhật nội dung SP)
-3. `ENABLE TRIGGER [MSmerge_tr_alterschemaonly] ON DATABASE`
-4. `EXEC sp_startpublication_snapshot @publication = 'PUB_TRACUU'` — tạo snapshot mới chứa SP đã sửa
-5. `EXEC sp_reinitmergesubscription @publication = 'PUB_TRACUU', @subscriber = 'ES-HAITD16\SQL3', @subscriber_db = 'NGANHANG'` — đánh dấu SQL3 cần reinit
-6. SSMS → Replication Monitor → SQL3 → Start Synchronization → chờ "Applied the snapshot and merged N data change(s)"
+### 3.2. SQL2 — Chi nhánh Tân Định
+- **Filter Replication:** `MACN = 'TANDINH'` cho `KhachHang`, `NhanVien`, `GD_GOIRUT`, `GD_CHUYENTIEN`.
+- **Không filter** (nhân bản toàn vẹn): `TaiKhoan`, `ChiNhanh`.
 
-> Trigger trên NGUON là `MSmerge_tr_alterschemaonly` (không có 's' cuối), khác với trigger trên SQL3 là `MSmerge_tr_alterschemasonly`. Dùng đúng tên khi DISABLE/ENABLE.
+### 3.3. SQL3 — Trạm Tra Cứu
+- **Chỉ có 1 bảng article:** `KhachHang` (replicate full — không filter).
+- **Không có local:** `NhanVien`, `TaiKhoan`, `GD_GOIRUT`, `GD_CHUYENTIEN`, `ChiNhanh` → khi cần đọc, SP TRACUU dùng `[LINK1]` (BENTHANH) + `[LINK2]` (TANDINH).
 
-### 3.2. Hướng dẫn sửa PUB_TRACUU trên SSMS (bỏ article thừa)
+### 3.4. Bảng phụ trợ `QuanTriLogin`
+- **KHÔNG replicate.** Mỗi instance có bản độc lập.
+- Lý do: `LoginName` là object cấp Server, sinh Login trên instance nào thì `QuanTriLogin` trên instance đó ghi. Nếu replicate sẽ tạo ảo giác "cùng 1 Login trên nhiều server" nhưng SID vẫn khác nhau → orphaned user.
 
-**Bước 1:** Trên NGUON (`ES-HAITD16`), mở SSMS → Replication → Local Publications → chuột phải `PUB_TRACUU` → **Properties**.
+### 3.5. Quy tắc đọc/ghi cho bảng nhân bản toàn vẹn
 
-**Bước 2:** Chọn trang **Articles** (bên trái).
+Với `ChiNhanh` (danh mục chỉ đọc):
+- **Đọc:** local.
+- **Ghi:** Chỉ ghi tại NGUON (qua `LINK0`). TUYỆT ĐỐI không ghi tại Subscriber (sẽ bị Replication ghi đè).
 
-**Bước 3:** Bỏ check tất cả bảng **trừ `KhachHang`**:
-- ❌ ChiNhanh → bỏ check
-- ❌ GD_CHUYENTIEN → bỏ check
-- ❌ GD_GOIRUT → bỏ check
-- ✅ **KhachHang → giữ check**
-- ❌ NhanVien → bỏ check
-- ❌ TaiKhoan → bỏ check
+Với `TaiKhoan` (có UPDATE thường xuyên):
+- **Đọc:** local.
+- **Ghi:** Chỉ ghi tại **site sở hữu** (site có `MACN` khớp với `TaiKhoan.MACN`). SP `sp_ChuyenTien`, `sp_GuiTien`, `sp_RutTien` so sánh MACN để quyết định UPDATE local hay qua `[LINK1]` trong `BEGIN DISTRIBUTED TRANSACTION`.
 
-**Stored Procedures** (giữ 2 SP bắt buộc, bỏ phần còn lại):
-- ✅ **sp_Login_App → giữ check** (admin đăng nhập vào TRACUU cần SP này)
-- ✅ **SP_TaoTaiKhoan → giữ check** (tạo tài khoản trên TRACUU cần SP này)
-- ❌ Các SP còn lại → bỏ check (SP đặc thù TRACUU cài thủ công qua `setup_db.js`)
+---
 
-**Bước 4:** Bấm OK → SSMS sẽ cảnh báo "Removing articles..." → xác nhận.
+## 4. Ma Trận Publication ↔ Article ↔ Subscriber
 
-**Bước 5:** Tạo Snapshot mới: chuột phải `PUB_TRACUU` → **Start Snapshot Agent** để đẩy snapshot chỉ có KhachHang xuống SQL3.
+| Publication | Publisher | Subscriber | Article: Bảng | Article: Stored Procedure |
+|---|---|---|---|---|
+| **PUB_BENTHANH** | NGUON | SQL1 (filter `MACN='BENTHANH'` cho các bảng phân mảnh) | `ChiNhanh`, `KhachHang`, `NhanVien`, `TaiKhoan`, `GD_GOIRUT`, `GD_CHUYENTIEN` | `sp_Login_App`, `SP_TaoTaiKhoan`, `sp_LietKeKhachHang`, `sp_ChuyenTien`, `sp_GuiTien`, `sp_RutTien`, `sp_MoTaiKhoan`, `sp_ChuyenNhanVien`, `sp_PhucHoiNhanVien`, `sp_ThemKhachHang`, `SP_SaoKeTaiKhoan` |
+| **PUB_TANDINH** | NGUON | SQL2 (filter `MACN='TANDINH'` cho các bảng phân mảnh) | Giống PUB_BENTHANH | Giống PUB_BENTHANH |
+| **PUB_TRACUU** | NGUON | SQL3 (không filter cho `KhachHang`) | **Chỉ** `KhachHang` | `sp_Login_App`, `SP_TaoTaiKhoan`, `sp_LietKeKhachHang` |
 
-**Bước 6:** Kiểm tra trên SQL3 (TRACUU): chỉ còn bảng `KhachHang` có dữ liệu. Các bảng khác (nếu đã sync trước đó) có thể vẫn tồn tại nhưng không còn được Replication đồng bộ — có thể DROP thủ công nếu muốn dọn sạch.
+**Ghi chú:**
+- 3 SP article đi kèm PUB_TRACUU đủ để admin đăng nhập vào TRACUU + tạo Login từ giao diện. Các SP đặc thù đọc LINK1/LINK2 (VD `sp_DanhSachNhanVien`) được cài **thủ công** qua [`sql/deploy_tracuu.sql`](../sql/deploy_tracuu.sql), không đưa vào Article.
+- Chi tiết deploy matrix của SP: xem [`07_Database_Schema.md`](07_Database_Schema.md) §2.4.
 
-> ⚠️ **Lưu ý:** Sau khi bỏ article, nếu SQL3 đã có dữ liệu ở các bảng bị bỏ, dữ liệu đó sẽ không tự xóa (Replication chỉ ngưng đồng bộ). Xóa thủ công bằng `DROP TABLE` nếu cần.
+---
 
-## 4. Tự Động Hóa Quá Trình Đồng Bộ Lên Server 3 (TRACUU)
+## 5. Quy Trình ALTER SP Là Article (rất hay bị hỏi)
 
-Hệ thống sử dụng **Transactional Replication** hoặc **Merge Replication** với cơ chế sau:
-1. **Khởi tạo:** Các chi nhánh (SQL1, SQL2, SQL3) nhận bản Snapshot ban đầu từ NGUON.
-2. **Đồng bộ 2 chiều (Sync):** Khi nhân viên tại Bến Thành thêm 1 Khách hàng mới, dữ liệu lập tức được chèn vào mảnh Bến Thành (SQL1). Thông qua Log Reader Agent / Merge Agent, dữ liệu này được đồng bộ ngược về máy chủ Gốc (`ES-HAITD16`) và từ đó truyền xuống máy chủ Tra cứu (`SQL3`).
-3. Dữ liệu của Bến Thành sẽ KHÔNG bao giờ bị đồng bộ nhầm sang Tân Định (`SQL2`) nhờ vào lớp Filter Constraints (Điều kiện lọc) đã thiết lập trong quá trình định nghĩa **Publication**.
+Vì SP như `sp_Login_App`, `SP_TaoTaiKhoan`, `sp_LietKeKhachHang` là Article, **không thể ALTER trực tiếp trên Subscriber** — Replication chặn bằng trigger `MSmerge_tr_alterschemasonly` (báo lỗi `Msg 21531`). Quy trình đúng:
 
-## 5. Phân Tán Giao Dịch Phức Tạp (Distributed Transactions)
+1. **Trên NGUON (Publisher):**
+   ```sql
+   DISABLE TRIGGER [MSmerge_tr_alterschemaonly] ON DATABASE;
+   -- (chú ý: trên NGUON tên là 'schemaonly' — không có 's' cuối,
+   --  khác với trigger trên Subscriber là 'schemasonly')
+   ```
 
-Đối với các nghiệp vụ xảy ra **xuyên chi nhánh** (Ví dụ: Chuyển tiền từ Bến Thành sang Tân Định), hệ thống không thể chỉ dựa vào Replication vì độ trễ (Latency). Thay vào đó, nó kết hợp dùng **Linked Server** và dịch vụ **MSDTC (Microsoft Distributed Transaction Coordinator)**.
+2. **Trên NGUON:** `CREATE OR ALTER PROCEDURE dbo.<TenSP> ...` — cập nhật nội dung SP.
 
-- Khi gọi Stored Procedure `sp_ChuyenTien` tại SQL1, câu lệnh sẽ Update trừ tiền ở `SQL1` (Local) và đồng thời gọi qua `[LINK1]` để Update cộng tiền ở `SQL2` (Remote).
-- MSDTC đảm bảo tuân thủ giao thức **2-Phase Commit** (Chuẩn bị và Ghi nhận). Nếu `SQL2` đột ngột sập nguồn hoặc mất mạng kết nối ngay lúc chuyển tiền, toàn bộ giao dịch tại cả 2 bên sẽ tự động bị Rollback, đảm bảo tiền không bị "mất tích" vào hư không.
+3. **Trên NGUON:** `ENABLE TRIGGER [MSmerge_tr_alterschemaonly] ON DATABASE;`
 
-## 6. Quản Lý Khóa Chính Phân Tán (Identity Range Management)
+4. **Trên NGUON:** Snapshot lại + reinit subscription:
+   ```sql
+   EXEC sp_startpublication_snapshot @publication = N'PUB_BENTHANH';
+   EXEC sp_reinitmergesubscription
+       @publication = N'PUB_BENTHANH',
+       @subscriber = N'ES-HAITD16\SQL1',
+       @subscriber_db = N'NGANHANG';
+   ```
 
-Trong môi trường phân tán (đặc biệt khi dùng Merge Replication hoặc Updateable Transactional Replication), nếu 2 chi nhánh cùng insert dữ liệu vào một bảng có cột `IDENTITY` (như bảng chứa `MAGD` tự tăng), sẽ xảy ra lỗi trùng khóa chính khi đồng bộ về Gốc.
+5. **SSMS Replication Monitor → View Synchronization Status → Start** — chờ log hiển thị "Applied the snapshot and merged N data change(s)".
 
-**Giải pháp:** SQL Server cung cấp cơ chế **Identity Range Management** (tự động phân bổ dải ID).
-- **Cơ chế:** Mỗi Subscriber sẽ được cấp một dải số độc lập (`@identity_range`). Ví dụ: Chi nhánh Bến Thành được cấp ID từ `1,000` đến `1,999`. Chi nhánh Tân Định được cấp ID từ `2,000` đến `2,999`. 
-- Khi Bến Thành thêm giao dịch, hệ thống tự động sinh ra số 1001. Khi đồng bộ về Gốc, số 1001 này tuyệt đối không bao giờ bị đụng độ (conflict) với bất kỳ số nào sinh ra tại Tân Định. Khi chi nhánh dùng hết dải số, hệ thống sẽ tự cấp phát dải mới.
+6. Kiểm tra Subscriber: `EXEC sp_helptext '<TenSP>'` → thấy code mới → thành công.
+
+> ⚠️ **KHÔNG BAO GIỜ** chạy `CREATE OR ALTER PROCEDURE` trực tiếp trên Subscriber cho SP là Article — sẽ bị chặn và làm lệch pha schema.
+
+---
+
+## 6. Distributed Transaction (MSDTC — Two‑Phase Commit)
+
+Replication đảm bảo dữ liệu **hội tụ cuối cùng (eventual consistency)** — có độ trễ giây/phút. Với các thao tác **đòi hỏi ACID xuyên site tức thời** (chuyển tiền liên CN, chuyển NV), phải dùng **Distributed Transaction** qua Linked Server + MSDTC.
+
+### 6.1. Kiến trúc 2‑Phase Commit
+
+```
+[Application]
+      │  BEGIN DISTRIBUTED TRANSACTION
+      ▼
+[Site A — SQL1]  ←──── MSDTC Coordinator ────→  [Site B — SQL2]
+      │                    │                          │
+      │   UPDATE local     │  (Prepare/Commit)        │  UPDATE qua LINK1
+      │   INSERT log       │                          │
+      ▼                    ▼                          ▼
+   Phase 1: Prepare (mỗi site: "sẵn sàng commit chưa?")
+   Phase 2: Commit đồng thời (nếu tất cả OK) hoặc Rollback đồng thời (nếu 1 fail)
+```
+
+### 6.2. SP dùng Distributed Transaction
+
+| SP | Thao tác | Lý do dùng DTC |
+|---|---|---|
+| `sp_ChuyenTien` | UPDATE TK chuyển (local) + UPDATE TK nhận (LINK1 nếu khác CN) + INSERT log local | Trừ và cộng phải cùng thành công |
+| `sp_GuiTien`, `sp_RutTien` | UPDATE TK (local hoặc LINK1 tùy MACN) + INSERT log local | Cập nhật số dư ở site sở hữu + ghi log ở site NV |
+| `sp_MoTaiKhoan` | INSERT `TaiKhoan` (kích hoạt Merge trigger) | Merge Replication trigger yêu cầu scope DTC tường minh |
+| `sp_ChuyenNhanVien` | UPDATE `TrangThaiXoa=1` local + INSERT qua LINK1 | Cả 2 bên phải cùng commit |
+| `sp_PhucHoiNhanVien` | Local phục hồi + LINK1 deactivate bản kia (nếu tồn tại) | Đảm bảo không có 2 bản ghi cùng CMND cùng active |
+
+### 6.3. Yêu cầu bắt buộc trong SP dùng DTC
+
+```sql
+SET NOCOUNT ON;
+SET XACT_ABORT ON;           -- BẮT BUỘC: mọi lỗi runtime → tự ROLLBACK
+BEGIN TRY
+    BEGIN DISTRIBUTED TRANSACTION;
+    -- ... UPDATE/INSERT local
+    -- ... UPDATE/INSERT qua [LINK1]
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+    DECLARE @ErrMsg nvarchar(4000) = ERROR_MESSAGE();
+    RAISERROR(@ErrMsg, 16, 1);
+END CATCH
+```
+
+### 6.4. Điều kiện môi trường
+
+- Dịch vụ **MSDTC** phải `Running` trên **tất cả instance tham gia**.
+- Cấu hình MSDTC: **Network DTC Access = Allow** (Inbound + Outbound).
+- Tường lửa cho phép **port 135** (RPC endpoint mapper) + **dynamic RPC port range**.
+- Kiểm tra nhanh trên SSMS: `SELECT * FROM sys.dm_tran_current_transaction;` sau `BEGIN DISTRIBUTED TRAN` — cột `is_local` phải là `0`.
+
+### 6.5. Vì sao phải dùng `sqlcmd` thay vì driver `mssql` để gọi SP có DTC?
+
+Driver `tedious` (dùng bởi package `mssql` trong Node.js) **không implement** giao thức MSDTC (chỉ có protocol TDS cơ bản). `sqlcmd` (Windows Native Client) hỗ trợ MSDTC đầy đủ. Vì vậy hàm `execSPAdmin` trong `db.js` gói `sqlcmd` qua `child_process.execFile` để chạy các SP có `BEGIN DISTRIBUTED TRANSACTION`. Xem chi tiết tại [`09_Database_Connection.md`](09_Database_Connection.md) §3.
+
+---
+
+## 7. Identity Range Management (Quản lý dải khóa phân tán)
+
+### 7.1. Vấn đề
+`GD_GOIRUT` và `GD_CHUYENTIEN` có cột `MAGD INT IDENTITY`. Nếu SQL1 và SQL2 đồng thời INSERT, cả 2 đều sinh `MAGD = 1, 2, 3...` → khi Replication đồng bộ về NGUON → **trùng khóa chính**.
+
+### 7.2. Giải pháp
+Bật **Identity Range Management** khi cấu hình Merge Replication cho các bảng có IDENTITY. SQL Server tự cấp mỗi Subscriber một dải:
+- SQL1 (BENTHANH): `MAGD ∈ [1..999]` (dải sơ cấp) + `[10_001..10_999]` (dải thứ cấp, tự cấp phát khi dải sơ cấp hết)
+- SQL2 (TANDINH): `MAGD ∈ [1_001..1_999]` + `[11_001..11_999]`
+- NGUON: `MAGD ∈ [2_001..2_999]` (dùng cho seed dữ liệu ban đầu)
+
+Khi dải sơ cấp còn ≤ `@threshold%` (VD 80%), SQL Server tự động cấp dải thứ cấp mới → không bao giờ chạm giới hạn.
+
+### 7.3. Cấu hình khi tạo Article
+```sql
+-- Ví dụ khi thêm article GD_GOIRUT vào PUB_BENTHANH
+EXEC sp_addmergearticle
+    @publication = N'PUB_BENTHANH',
+    @article = N'GD_GOIRUT',
+    @source_object = N'GD_GOIRUT',
+    @identityrangemanagementoption = N'auto',
+    @pub_identity_range = 10000,
+    @identity_range = 1000,
+    @threshold = 80;
+```
+
+### 7.4. Ghi chú thiết kế khóa phân tán khác
+
+- **`MANV`** — không dùng IDENTITY. App sinh với **prefix chi nhánh** (`BT001`, `TD001`) qua `sinhMANV()`. Đảm bảo toàn cục duy nhất kể cả khi chuyển NV giữa 2 CN.
+- **`SOTK`** — không dùng IDENTITY. App sinh với **prefix chi nhánh** (`BT0000001`, `TD0000001`) qua `sinhSOTK()`. Với TK cross‑branch (NV BT mở TK cho KH TD), prefix theo **chi nhánh NV** để trace nguồn gốc, còn `MACN = chi nhánh KH` để tuân thủ FK.
+- **`CMND`** (KhachHang PK) — không sinh tự động; do người dùng nhập, đảm bảo toàn cục duy nhất bởi nghiệp vụ (mỗi công dân có 1 CMND).
+
+---
+
+## 8. Cơ Chế Đồng Bộ (Sync)
+
+1. **Khởi tạo:** Publisher tạo Snapshot ban đầu → Snapshot Agent đẩy xuống Subscriber lần đầu.
+2. **Chu kỳ đồng bộ:**
+   - Publisher: Log Reader Agent (với Transactional Replication) hoặc Merge Agent (với Merge Replication) theo dõi thay đổi.
+   - Subscriber: Merge Agent chạy định kỳ, gọi ngược Publisher để lấy delta.
+3. **Filter tại Publication:** Đảm bảo dữ liệu của BENTHANH không lọt sang TANDINH và ngược lại.
+4. **Conflict resolution (Merge Replication):** Nếu 2 site cùng sửa 1 row cùng key trước khi sync → dùng **default resolver** (ưu tiên Publisher wins). Trong hệ thống này rất hiếm gặp vì `MACN` phân tách đường ghi (chỉ có site sở hữu được UPDATE).
+
+---
+
+## 9. Object KHÔNG được Replication đồng bộ (rất hay bị hỏi vấn đáp)
+
+Replication chỉ đồng bộ **đối tượng cấp Database** (bảng, SP, view, function, trigger). Các đối tượng sau **KHÔNG** đồng bộ và phải tạo thủ công trên từng instance:
+
+| Đối tượng | Cấp | Cách quản lý |
+|---|---|---|
+| SQL Login (`sys.server_principals`) | **Server** | Tạo tay trên mỗi instance (VD `HTKN`, `admin`, `BT001`, `1111111111`). Xem [`03_DemoAccounts.md`](03_DemoAccounts.md) §5. |
+| Linked Server (`sys.servers`) | **Server** | Cấu hình tay trên mỗi instance. Xem [`10_Linked_Servers.md`](10_Linked_Servers.md). |
+| Security Mapping của Linked Server (`sys.linked_logins`) | **Server** | `sp_addlinkedsrvlogin` trên mỗi instance. |
+| SQL Server Agent Jobs | **Server** | Không dùng trong đồ án. |
+| Server Role membership (`securityadmin`, `sysadmin`) | **Server** | Gán tay. |
+
+> **Bài học:** Khi setup instance mới, ĐỪNG dựa vào Replication để có các object trên. Chạy các script `sql/setup/09..11_TaoTaiKhoan*.sql` trên **cả 4 instance**.

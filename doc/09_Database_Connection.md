@@ -1,174 +1,146 @@
-# Quản Lý Kết Nối CSDL Phân Tán (`db.js`)
+# Kết Nối Cơ Sở Dữ Liệu (`db.js`)
 
-Đây là trái tim của ứng dụng. File `db.js` định nghĩa toàn bộ cơ chế kết nối tới các SQL Server instance.
-
----
-
-## 1. Khái Niệm `serverKey`
-
-Mỗi instance SQL Server được định danh bằng một key cố định:
-
-| serverKey | Instance | Vai trò |
-|-----------|----------|---------|
-| `NGUON` | `ES-HAITD16` | Publisher / Server gốc |
-| `BENTHANH` | `ES-HAITD16\SQL1` | Chi nhánh Bến Thành |
-| `TANDINH` | `ES-HAITD16\SQL2` | Chi nhánh Tân Định |
-| `TRACUU` | `ES-HAITD16\SQL3` | Server tra cứu / báo cáo toàn cục |
-
-`serverKey` được gán cho từng user khi đăng nhập (`req.session.user.SERVER`) và dùng xuyên suốt phiên làm việc. Nhân viên BENTHANH luôn thao tác trên SQL1, nhân viên TANDINH trên SQL2.
+`APP_NGANHANG/db.js` là module trung tâm quản lý toàn bộ kết nối tới 4 SQL Server instance. Nó cung cấp 2 loại pool và 5 hàm helper phục vụ mọi route.
 
 ---
 
-## 2. Hai Loại Connection Pool
-
-### 2.1. `getPool(req, serverKey)` — Pool theo từng User (chính)
-
-Đây là cơ chế **quan trọng nhất và đặc biệt nhất** của hệ thống.
+## 1. Cấu Hình Kết Nối
 
 ```javascript
-// db.js:83
-async function getPool(req, serverKey) {
-  const user = req.session.user;             // lấy username/password từ session
-  const poolKey = `${targetServer}_${user.USERNAME}`;
+const configs = {
+  NGUON:    { server: 'ES-HAITD16',       database: 'NGANHANG', user: 'HTKN', password: '123', ... },
+  BENTHANH: { server: 'ES-HAITD16\\SQL1', database: 'NGANHANG', user: 'HTKN', password: '123', ... },
+  TANDINH:  { server: 'ES-HAITD16\\SQL2', database: 'NGANHANG', user: 'HTKN', password: '123', ... },
+  TRACUU:   { server: 'ES-HAITD16\\SQL3', database: 'NGANHANG', user: 'HTKN', password: '123', ... }
+};
+```
 
-  if (!pools[poolKey]) {
-    const userConfig = {
-      server: serverConfig.server,
-      user: user.USERNAME,      // ← dùng ĐÚNG username của người dùng
-      password: user.PASSWORD,  // ← dùng ĐÚNG password của người dùng
-      ...
-    };
-    pools[poolKey] = await new sql.ConnectionPool(userConfig).connect();
-  }
-  return pools[poolKey];
+- `user/password` ở `configs` là **admin login `HTKN`** — chỉ dùng cho `adminPool` (không phải cho pool người dùng).
+- Người dùng thật đăng nhập bằng SQL Login riêng (BT001, TD001, NV_..., KH_..., admin) — mật khẩu lấy từ `session.user.PASSWORD`.
+- Cả 4 instance đều nằm trên cùng máy `ES-HAITD16`, được tách bằng tên instance (`SQL1/SQL2/SQL3`) hoặc default instance (NGUON).
+
+---
+
+## 2. Hai Loại Pool
+
+### 2.1. Per-User Pool (`pools`) — mặc định cho request người dùng
+
+- **Key**: `${serverKey}_${username}` (ví dụ `BENTHANH_BT001`).
+- **Login dùng để kết nối**: chính SQL Login của người dùng trong `session.user.USERNAME/PASSWORD`.
+- **Ý nghĩa**: mọi câu SQL do người dùng gây ra đều chạy dưới danh nghĩa họ → SQL Server tự phân quyền theo GRANT/DENY đã cấp cho role → `LOGIN_NAME()` trong SP là chính họ (dễ audit).
+- **Tạo bởi**: `getPool(req, serverKey)`.
+- **Được dùng bởi**: `execSP`, `querySP`, `querySQL`.
+
+### 2.2. Admin Pool (`adminPools`) — dùng cho tác vụ đặc quyền
+
+- **Key**: `serverKey` (ví dụ `BENTHANH`).
+- **Login dùng để kết nối**: `HTKN` (đã được cấp `sysadmin` / các quyền server-level cần thiết).
+- **Ý nghĩa**: một số tác vụ đòi hỏi quyền server-level mà người dùng thường không có (CREATE LOGIN, DROP LOGIN, ALTER SERVER ROLE), hoặc muốn cô lập việc điều phối Distributed Tran khỏi phiên người dùng.
+- **Tạo bởi**: `getAdminPool(serverKey)`.
+- **Được dùng bởi**: `queryAdminSQL` (raw SQL admin) và trực tiếp trong các route quản trị.
+
+> Vì sao cần chia 2 loại?
+> - Người dùng thường không có quyền `CREATE LOGIN`; nếu cho, sẽ vỡ mô hình bảo mật.
+> - Admin pool cần dùng chung 1 login cho toàn service (không phụ thuộc ai đang đăng nhập).
+
+---
+
+## 3. Helper Chính — Bảng So Sánh
+
+| Hàm | Pool | Ai gọi | Dùng khi nào |
+|---|---|---|---|
+| `getPool(req, serverKey)` | per-user | nội bộ | Base primitive; ít khi gọi trực tiếp |
+| `execSP(req, key, sp, params)` | per-user | route | SP thông thường (SELECT/UPDATE local), không MSDTC |
+| `querySP(req, key, sp, params)` | per-user | route | Giống `execSP` nhưng trả về `recordset` sạch |
+| `querySQL(req, key, sqlStr, params)` | per-user | route | Raw SQL người dùng (SELECT trực tiếp, không dùng SP) |
+| `getAdminPool(serverKey)` | admin (HTKN) | route quản trị | Chuẩn bị pool cho DDL server-level |
+| `queryAdminSQL(key, sqlStr, params)` | admin (HTKN) | route | Raw SQL admin (VD dùng Linked Server LINK1 để tạo login từ xa) |
+| `execSPAdmin(key, sp, params)` | **KHÔNG dùng pool** — bung `sqlcmd` | route ghi tiền | SP có `BEGIN DISTRIBUTED TRANSACTION` (MSDTC) |
+
+---
+
+## 4. `execSPAdmin` — Vì Sao Phải Dùng `sqlcmd`?
+
+`node-mssql` (driver `tedious`) **không hỗ trợ đầy đủ `BEGIN DISTRIBUTED TRANSACTION`**: khi SP mở distributed tran, driver dễ mất kết nối, không rollback được, hoặc treo. Do vậy các SP dạng phân tán được gọi qua **`sqlcmd`** — CLI native dùng ODBC/OLE DB, hỗ trợ MSDTC nguyên vẹn.
+
+Chi tiết implementation quan trọng:
+
+- **SQL template tĩnh** (chuỗi `-Q`) chỉ chứa placeholder `$(VarName)` — không nhúng giá trị. Giá trị được truyền qua `-v` (channel riêng). ⇒ **chống shell injection tuyệt đối**.
+- Vẫn thay `'` → `''` trong giá trị để tránh vỡ SQL string literal.
+- Ghi output ra file tạm với `-o outFile -f 65001` → sqlcmd xuất **UTF-8 chuẩn** thay vì OEM codepage (giữ được dấu tiếng Việt trong `RAISERROR`).
+- Dùng flag `-b` để `sqlcmd` exit với error code nếu SQL lỗi.
+- Sau khi đọc file, lọc bỏ dòng header kỹ thuật `Msg ###, Level ##, ...` để chỉ giữ lại nội dung `RAISERROR` thật hiển thị cho user.
+
+SP dùng `execSPAdmin`:
+- `sp_ChuyenTien`, `sp_GuiTien`, `sp_RutTien`
+- `sp_MoTaiKhoan`
+- `sp_ChuyenNhanVien`, `SP_PhucHoiNhanVien`
+
+---
+
+## 5. Xử Lý Session Bị Kill / Pool Chết
+
+Khi Publisher đang chạy Merge/Transactional Replication, session có thể bị SQL Server kill (thấy log `The client was unable to reuse a session with SPID N`). `db.js` phòng vệ hai tầng:
+
+### 5.1. Phát hiện pool "chết" trước khi dùng
+
+```javascript
+function isPoolDead(pool) {
+  return !pool || !pool.connected || pool._closed;
 }
 ```
 
-**Tại sao quan trọng?**
-- Mỗi user kết nối bằng SQL Login của chính họ, không qua tài khoản trung gian.
-- SQL Server ghi nhận đúng `LOGIN_NAME()` → mọi thao tác đều có dấu vết audit.
-- Pool được cache theo `serverKey + username` — user thứ 2 không dùng chung pool với user thứ 1.
-- `username` và `password` được lưu trong `req.session.user` khi đăng nhập (xem `auth.js`).
+Trước mỗi lần lấy pool: nếu chết → close cứng → xóa khỏi cache → tạo mới.
 
-**Hàm wrapper dùng pool này:**
-- `querySQL(req, serverKey, sql, params)` — chạy raw SQL
-- `execSP(req, serverKey, spName, params)` — gọi SP bằng tedious driver
-- `querySP(req, serverKey, spName, params)` — gọi SP và trả về recordset
-
-### 2.2. `getAdminPool(serverKey)` — Pool Admin (phụ, dùng riêng cho DDL)
+### 5.2. Retry 1 lần khi query bung lỗi mạng
 
 ```javascript
-// db.js:65
-async function getAdminPool(serverKey) {
-  adminPools[key] = await new sql.ConnectionPool({
-    user: serverConfig.user,     // ← tài khoản HTKN (hardcoded)
-    password: serverConfig.password,
-    ...
-  }).connect();
+function isSessionKilled(err) {
+  const msg = (err.message || '').toLowerCase();
+  return msg.includes('kill state') || msg.includes('connection is closed') ||
+         msg.includes('socket error') || msg.includes('network') ||
+         err.code === 'ECONNCLOSED' || err.code === 'ESOCKET';
 }
 ```
 
-Dùng tài khoản `HTKN` (có quyền `securityadmin`). Chỉ dùng cho `quantri.js` khi tạo/xóa SQL Login (`CREATE LOGIN`, `ALTER LOGIN`) — việc không thể làm bằng tài khoản nhân viên thường.
+Trong `execSP`, `querySQL`, `queryAdminSQL`: bọc lời gọi trong vòng `for (attempt=0; attempt<2; attempt++)`. Attempt 0 lỗi + `isSessionKilled` trả `true` → xóa pool → attempt 1 sẽ tạo pool mới và chạy lại. Vòng 2 lỗi → ném lên caller.
+
+Cơ chế này giúp app tự "hồi" sau khi replication làm bay session mà không cần user F5.
 
 ---
 
-## 3. `execSP` vs `execSPAdmin` — Hai Đường Gọi SP
+## 6. Vòng Đời Kết Nối
 
-| Hàm | Cách gọi | Dùng khi |
-|-----|----------|----------|
-| `execSP(req, serverKey, spName, params)` | tedious driver (mssql package) | SP thông thường — Login, DanhSachTaiKhoan... |
-| `execSPAdmin(serverKey, spName, params)` | `sqlcmd` (CLI, Native Client) | SP có `BEGIN DISTRIBUTED TRANSACTION` — **GuiTien, RutTien, ChuyenTien, MoTaiKhoan**, ChuyenNhanVien, PhucHoiNhanVien |
+```
+User đăng nhập (auth.js)
+    └─ Không giữ pool sẵn — chỉ gọi 1 câu SELECT thử qua getPool() để xác thực Login/Password.
 
-**Tại sao cần `execSPAdmin` cho Distributed Transaction?**
+User bấm menu, gửi POST /giaodich/guitien
+    └─ route gọi execSPAdmin('BENTHANH', 'sp_GuiTien', { ... })
+        └─ execSPAdmin bung sqlcmd (không đụng pool per-user)
 
-Driver `tedious` (Node.js) không hỗ trợ `BEGIN DISTRIBUTED TRANSACTION` vì đây là tính năng của SQL Server Native Client, không có trong protocol TDS được tedious implement.
+User bấm /baocao/saoke
+    └─ route gọi querySP(req, 'TRACUU', 'SP_SaoKeTaiKhoan', { ... })
+        └─ getPool(req, 'TRACUU') → tìm pool 'TRACUU_KH_...' → nếu chết thì tạo mới
+            └─ Kết nối tới ES-HAITD16\\SQL3 với LOGIN của KH đó
+                └─ SP đọc dữ liệu qua LINK1/LINK2 (theo MACN của KH)
 
-`sqlcmd` dùng Native Client thật sự của Windows → hỗ trợ MSDTC đầy đủ.
+User logout
+    └─ req.session.destroy() — Pool không bị đóng ngay (giữ cache trong RAM đến khi process tắt).
+```
+
+Pool per-user chỉ bị đóng khi:
+1. Node process khởi động lại.
+2. `isPoolDead()` phát hiện và xóa để tạo lại.
+3. `isSessionKilled()` bung retry → xóa pool cũ.
+
+---
+
+## 7. Export
 
 ```javascript
-// db.js:135 — execSPAdmin dùng sqlcmd
-execFile('sqlcmd', [
-  '-S', serverAddr,
-  '-d', 'NGANHANG',
-  '-U', 'HTKN', '-P', '123',
-  ...vArgs,            // ← giá trị đi qua -v (tách biệt khỏi SQL template)
-  '-Q', query,         // ← SQL template chỉ có $(VarName) placeholder
-  '-b'                 // ← exit với error code nếu SQL lỗi
-], callback);
+module.exports = { getPool, getAdminPool, execSP, execSPAdmin, querySP, querySQL, queryAdminSQL, sql, configs };
 ```
 
-**Bảo mật `execSPAdmin`:** Giá trị params đi qua `-v Key=Value` (channel riêng), không nhúng trực tiếp vào chuỗi SQL → tránh shell injection. Dấu `'` trong giá trị được escape thành `''`.
-
----
-
-## 4. Luồng Request Đầy Đủ (Browser → SQL)
-
-```
-[Browser] POST /giaodich/chuyentien
-    │
-    ▼
-[app.js] middleware: requireLogin → requireRole('NganHang','ChiNhanh')
-    │
-    ▼
-[routes/giaodich.js:85] router.post('/chuyentien', ...)
-    │  lấy serverKey = req.session.user.SERVER (ví dụ: 'BENTHANH')
-    │  params: { SOTK_CHUYEN, SOTK_NHAN, SOTIEN, MANV }
-    │
-    ▼
-[db.js:execSP] → [db.js:getPool] → pool[BENTHANH_BT001]
-    │            (kết nối bằng username=BT001, password=... )
-    │            (kết nối tới ES-HAITD16\SQL1)
-    │
-    ▼
-SQL Server SQL1: EXEC sp_ChuyenTien @SOTK_CHUYEN=..., @SOTK_NHAN=..., ...
-    │
-    ├─ Nếu SOTK_NHAN local → UPDATE local
-    └─ Nếu SOTK_NHAN ở SQL2 →
-           BEGIN DISTRIBUTED TRANSACTION
-           UPDATE SQL1.TaiKhoan (trừ tiền)
-           UPDATE [LINK1].SQL2.TaiKhoan (cộng tiền) ← MSDTC 2PC
-           COMMIT
-    │
-    ▼
-[routes/giaodich.js] nhận kết quả → res.redirect('/...?success=...')
-    │
-    ▼
-[Browser] thấy thông báo thành công
-```
-
----
-
-## 5. Connection Pool Resilience (Retry & Recovery)
-
-Pool có thể rơi vào trạng thái "chết" (session bị kill, mất kết nối mạng, SQL Server restart). `db.js` xử lý bằng 3 cơ chế:
-
-1. **`isPoolDead(pool)`**: Kiểm tra `pool.connected` + `pool._closed` trước mỗi lần reuse. Nếu pool chết → xóa khỏi cache, tạo pool mới.
-
-2. **`isSessionKilled(err)`**: Nhận diện các lỗi session bị kill (`kill state`, `connection is closed`, `socket error`, `ECONNCLOSED`, `ESOCKET`).
-
-3. **Retry logic** (1 lần) trong `execSP`, `querySQL`, `queryAdminSQL`: khi gặp lỗi session killed → xóa pool cũ → tạo pool mới → thử lại 1 lần. Nếu vẫn lỗi → throw.
-
-**Hàm `queryAdminSQL(serverKey, sqlStr, params)`** — bổ sung mới, tương tự `querySQL` nhưng dùng admin pool (`HTKN`). Có retry tự động. Dùng cho các query cần quyền cao hoặc query LINK1 (admin pool có mapping Linked Server, user pool thường thì không).
-
----
-
-## 6. Quản Lý Session & Pool
-
-- Pool được cache trong module-level object `pools` theo key `${serverKey}_${username}`.
-- Khi user logout (`/logout`), `req.session.destroy()` xóa session nhưng **pool vẫn tồn tại** trong bộ nhớ process.
-- Điều này có nghĩa: nếu user A và B cùng login với cùng username (không thực tế), họ sẽ share pool → cần đảm bảo mỗi username là duy nhất.
-- Pool có `idleTimeoutMillis: 30000` — tự đóng connection sau 30s không dùng, tránh leak.
-
----
-
-## 7. Xác Định Server Trong Routes
-
-Hàm helper xuất hiện trong mọi route file:
-
-```javascript
-function getServer(req) { return req.session.user.SERVER || 'BENTHANH'; }
-```
-
-- Nhân viên ChiNhanh: SERVER = 'BENTHANH' hoặc 'TANDINH' (gán lúc login theo chi nhánh chọn).
-- Nhóm NganHang: SERVER = 'TRACUU' (luôn kết nối server tra cứu).
-- Fallback về 'BENTHANH' nếu thiếu (không nên xảy ra).
+- `sql`: re-export namespace `mssql` để route có thể dùng `sql.Int`, `sql.NVarChar(...)` khi cần binding kiểu chặt.
+- `configs`: export để `setup_db.js` biết địa chỉ 4 instance.

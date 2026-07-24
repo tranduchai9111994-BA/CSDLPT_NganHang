@@ -10,9 +10,9 @@
 | Nhóm | SQL Login | Password | Chi nhánh chọn | Role |
 |------|-----------|----------|----------------|------|
 | ChiNhanh (BT) | `BT001` | `1` | `BENTHANH` | ChiNhanh |
-| ChiNhanh (TD) | `NV003` | `123456` | `TANDINH` | ChiNhanh |
+| ChiNhanh (TD) | `TD001` | `1` | `TANDINH` | ChiNhanh |
 | NganHang | `admin` | `1` | `BENTHANH` hoặc `TANDINH` (hệ thống tự dùng TRACUU) | NganHang |
-| KhachHang | `1111111111` | `1111111111` | `BENTHANH` hoặc `TANDINH` | KhachHang |
+| KhachHang | `1111111111` | `123456` | `BENTHANH` hoặc `TANDINH` | KhachHang |
 
 > **Lưu ý login page:** Dropdown chỉ còn BENTHANH và TANDINH. Admin/KhachHang chọn site nào cũng được — hệ thống tự điều phối. NganHang luôn được gán `effectiveServer = TRACUU` sau khi đăng nhập (xem `auth.js`). TRACUU bị ẩn khỏi dropdown vì chọn vào thì dữ liệu y chang BENTHANH — không có giá trị phân biệt với người dùng.
 
@@ -55,7 +55,7 @@ Kiểm tra cơ chế đăng nhập dùng chính SQL Login (không dùng bảng u
 | 01b | username=`BT001`, password=`saimat`, chi nhánh=`BENTHANH` | Lỗi: "Sai tài khoản hoặc mật khẩu" |
 | 01c | username=`TD001`, password=`1`, chi nhánh=`BENTHANH` | Lỗi: "Sai tài khoản hoặc mật khẩu" *(xem giải thích bên dưới)* |
 | 01d | username=`admin`, password=`1`, chi nhánh=`BENTHANH` | Thành công, NHOM=NganHang, MACN=TRACUU *(xem giải thích bên dưới)* |
-| 01e | username=`1111111111`, password=`123456`, chi nhánh=`BENTHANH` | Thành công, NHOM=KhachHang *(xem điều kiện tiên quyết bên dưới)* |
+| 01e | username=`1111111111`, password=`123456`, chi nhánh=`BENTHANH` | Thành công, NHOM=KhachHang |
 
 ### Hệ thống xử lý chi tiết
 
@@ -103,7 +103,7 @@ mỗi SQL Server instance có riêng danh sách Login. `BT001` chỉ tồn tại
 
 **Giải thích 01e — KhachHang đăng nhập:**  
 KH login không được tạo tự động qua setup script. Phải chạy [`11_TaoTaiKhoanKhachHang_Demo.sql`](../sql/setup/11_TaoTaiKhoanKhachHang_Demo.sql) trên **SQL1** (cho KH BENTHANH) và **SQL2** (cho KH TANDINH) trước khi test.  
-Sau khi chạy: username = CMND (`1111111111`), password = `1`, chi nhánh = `BENTHANH`.
+Sau khi chạy: username = CMND (`1111111111`), password = `123456`, chi nhánh = `BENTHANH`.
 
 **Giải thích 01c — tại sao không ra "không có quyền đăng nhập vào chi nhánh này":**  
 `TD001` chỉ tồn tại trên SQL2 (TANDINH). Khi chọn chi nhánh `BENTHANH`, hệ thống kết nối tới SQL1 bằng credentials `TD001`/`1` → SQL1 từ chối ngay (không có login này) → lỗi dừng ở **Bước 1**, chưa đến Bước 2 hay Bước 3.  
@@ -765,7 +765,7 @@ Xác nhận 1 khách hàng (cùng CMND) có thể mở tài khoản ở cả 2 c
 |----|----------|---------|---------------|
 | CN-01 | Login `BT001/1`, chọn **BENTHANH** | Thành công, MACN=BENTHANH | |
 | CN-02 | Login `BT001/1`, chọn **TANDINH** | **Lỗi:** "Bạn không có quyền đăng nhập vào chi nhánh này" | SQL Login BT001 không tồn tại trên SQL2 |
-| CN-03 | Login `NV003/123456`, chọn **TANDINH** | Thành công, MACN=TANDINH | |
+| CN-03 | Login `TD001/1`, chọn **TANDINH** | Thành công, MACN=TANDINH | |
 | CN-04 | BT001 → Khách hàng → thấy **chỉ KH BENTHANH** | Không thấy KH TANDINH | Phân mảnh ngang theo MACN |
 | CN-05 | BT001 → **Thêm KH mới** | Thành công, KH lưu vào SQL1 | |
 | CN-06 | BT001 → **Sửa** thông tin KH | Thành công | |
@@ -774,7 +774,7 @@ Xác nhận 1 khách hàng (cùng CMND) có thể mở tài khoản ở cả 2 c
 | CN-09 | BT001 → **Gửi tiền** TK BENTHANH | Thành công | |
 | CN-10 | BT001 → **Rút tiền** TK BENTHANH | Thành công (nếu đủ số dư) | |
 | CN-11 | BT001 → **Chuyển tiền** BT → TD | Thành công, MSDTC phân tán | SQL1+SQL2, 2-phase commit |
-| CN-12 | NV003 (TANDINH) → **Sao kê** TK `BT0000001` sau khi nhận chuyển tiền | Thấy GD nhận (NT) | SP đọc LINK bên TANDINH |
+| CN-12 | TD001 (TANDINH) → **Sao kê** TK `BT0000001` sau khi nhận chuyển tiền | Thấy GD nhận (NT) | SP đọc LINK bên TANDINH |
 | CN-13 | Tạo tài khoản → nhóm **ChiNhanh** → thành công | ✅ | ChiNhanh tạo được cùng nhóm |
 | CN-14 | Tạo tài khoản → nhóm **NganHang** → **bị từ chối** | Lỗi: "Quyền hạn không hợp lệ" | `quantri.js:82` chặn backend |
 
@@ -782,8 +782,8 @@ Xác nhận 1 khách hàng (cùng CMND) có thể mở tài khoản ở cả 2 c
 
 | ID | Thao tác | Kỳ vọng | Điểm phân tán |
 |----|----------|---------|---------------|
-| KH-01 | Login `1111111111/1111111111`, chọn **BENTHANH** | Thành công, sidebar **chỉ thấy "Sao kê GD"** | |
-| KH-02 | Login `1111111111/1111111111`, chọn **TANDINH** | Thành công, **dữ liệu y chang KH-01** | TaiKhoan replicate toàn vẹn |
+| KH-01 | Login `1111111111/123456`, chọn **BENTHANH** | Thành công, sidebar **chỉ thấy "Sao kê GD"** | |
+| KH-02 | Login `1111111111/123456`, chọn **TANDINH** | Thành công, **dữ liệu y chang KH-01** | TaiKhoan replicate toàn vẹn |
 | KH-03 | Vào **Tài khoản của tôi** | Thấy đủ các TK của mình (kể cả TK ở chi nhánh khác) | sp_TaiKhoanKhachHang đọc local (TK replicate full) |
 | KH-04 | Thử URL `/khachhang` | Redirect hoặc 403 | requireLogin → KhachHang không có menu này |
 | KH-05 | Thử URL `/nhanvien` | Redirect hoặc 403 | |
@@ -805,7 +805,7 @@ Xác nhận 1 khách hàng (cùng CMND) có thể mở tài khoản ở cả 2 c
 |----|-------|----------|---------|---------------|
 | GD-01a | `BT001` / BENTHANH | Gửi tiền vào `BT0000001` (TK thuộc BT), 200.000đ | Thành công — UPDATE TK **local** | Cùng CN → không cần LINK1. GD_GOIRUT ghi trên SQL1 |
 | GD-01b | `BT001` / BENTHANH | Gửi tiền vào `TD0000001` (TK thuộc TD), 500.000đ | Thành công — UPDATE TK **qua LINK1** | SP chạy trên SQL1, so sánh MACN TK (TD) ≠ MACN NV (BT) → UPDATE qua LINK1. GD_GOIRUT ghi trên SQL1 (đúng mảnh NV) |
-| GD-01c | `NV003` / TANDINH | Rút tiền từ `BT0000001` (TK thuộc BT), 100.000đ | Thành công — UPDATE TK **qua LINK1** | SP chạy trên SQL2, MACN TK (BT) ≠ MACN NV (TD) → UPDATE qua LINK1. GD_GOIRUT ghi trên SQL2 |
+| GD-01c | `TD001` / TANDINH | Rút tiền từ `BT0000001` (TK thuộc BT), 100.000đ | Thành công — UPDATE TK **qua LINK1** | SP chạy trên SQL2, MACN TK (BT) ≠ MACN NV (TD) → UPDATE qua LINK1. GD_GOIRUT ghi trên SQL2 |
 | GD-01d | `BT001` / BENTHANH | Rút tiền từ `TD0000001`, số dư không đủ | Lỗi "Số dư không đủ" | `@@ROWCOUNT = 0` sau UPDATE qua LINK1 → ROLLBACK |
 
 ### Testcase chuyển tiền cross-branch
@@ -813,7 +813,7 @@ Xác nhận 1 khách hàng (cùng CMND) có thể mở tài khoản ở cả 2 c
 | ID | Login | Thao tác | Kỳ vọng | Điểm phân tán |
 |----|-------|----------|---------|---------------|
 | GD-02a | `BT001` / BENTHANH | Chuyển `BT0000001` → `TD0000001`, 500.000đ | Thành công, MSDTC commit 2 server | SQL1 trừ TK chuyển local, cộng TK nhận qua LINK1 |
-| GD-02b | `NV003` / TANDINH | Chuyển `TD0000001` → `BT0000001`, 300.000đ | Thành công | SQL2 trừ local, cộng qua LINK1. GD_CHUYENTIEN ghi SQL2 |
+| GD-02b | `TD001` / TANDINH | Chuyển `TD0000001` → `BT0000001`, 300.000đ | Thành công | SQL2 trừ local, cộng qua LINK1. GD_CHUYENTIEN ghi SQL2 |
 
 ### Testcase sao kê (xác nhận GD ghi đúng mảnh)
 
@@ -830,11 +830,11 @@ Xác nhận 1 khách hàng (cùng CMND) có thể mở tài khoản ở cả 2 c
 SELECT * FROM GD_GOIRUT WHERE RTRIM(MANV) = 'BT001';
 -- Kỳ vọng: thấy GD gửi/rút cho cả TK BT lẫn TK TD (NV BT001 thực hiện)
 
--- Trên SQL2 (TANDINH): GD_GOIRUT có GD do NV003 thực hiện
-SELECT * FROM GD_GOIRUT WHERE RTRIM(MANV) = 'NV003';
+-- Trên SQL2 (TANDINH): GD_GOIRUT có GD do TD001 thực hiện
+SELECT * FROM GD_GOIRUT WHERE RTRIM(MANV) = 'TD001';
 -- Kỳ vọng: thấy GD rút cho TK BT (NV TD thực hiện, GD ghi trên SQL2)
 
--- Quan trọng: GD_GOIRUT trên SQL1 KHÔNG có GD của NV003, và ngược lại
+-- Quan trọng: GD_GOIRUT trên SQL1 KHÔNG có GD của TD001, và ngược lại
 -- → Chứng minh GD phân mảnh đúng theo NV
 ```
 

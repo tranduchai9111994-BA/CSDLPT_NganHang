@@ -151,13 +151,15 @@ Replication đảm bảo dữ liệu **hội tụ cuối cùng (eventual consist
 
 ### 6.2. SP dùng Distributed Transaction
 
-| SP | Thao tác | Lý do dùng DTC |
-|---|---|---|
-| `sp_ChuyenTien` | UPDATE TK chuyển (local) + UPDATE TK nhận (LINK1 nếu khác CN) + INSERT log local | Trừ và cộng phải cùng thành công |
-| `sp_GuiTien`, `sp_RutTien` | UPDATE TK (local hoặc LINK1 tùy MACN) + INSERT log local | Cập nhật số dư ở site sở hữu + ghi log ở site NV |
-| `sp_MoTaiKhoan` | INSERT `TaiKhoan` (kích hoạt Merge trigger) | Merge Replication trigger yêu cầu scope DTC tường minh |
-| `sp_ChuyenNhanVien` | UPDATE `TrangThaiXoa=1` local + INSERT qua LINK1 | Cả 2 bên phải cùng commit |
-| `sp_PhucHoiNhanVien` | Local phục hồi + LINK1 deactivate bản kia (nếu tồn tại) | Đảm bảo không có 2 bản ghi cùng CMND cùng active |
+| SP | Thao tác | Điều kiện DTC | Ghi chú |
+|---|---|---|---|
+| `sp_ChuyenTien` | UPDATE TK chuyển (local) + UPDATE TK nhận (LINK1 nếu khác CN) + INSERT log local | Chỉ khi khác CN (fix #6) | Cùng CN → `BEGIN TRANSACTION` local. Có chặn self-transfer (fix #9). |
+| `sp_GuiTien`, `sp_RutTien` | UPDATE TK (local hoặc LINK1 tùy MACN) + INSERT log local | Chỉ khi TK và NV khác CN (fix #6) | Cùng CN → local tran, không cần MSDTC. |
+| `sp_MoTaiKhoan` | INSERT `TaiKhoan` (kích hoạt Merge trigger) | Luôn dùng DTC | Merge Replication trigger yêu cầu scope DTC tường minh. SOTK sinh atomic trong SP với vòng retry (fix #3). |
+| `sp_ChuyenNhanVien` | UPDATE `TrangThaiXoa=1` local + UPDATE/INSERT qua LINK1 | Luôn dùng DTC | Có resurrect logic (RF-A): UPDATE ngược bản soft-delete cùng CMND thay vì INSERT khi vi phạm UQ. |
+| `sp_PhucHoiNhanVien` | Local phục hồi + LINK1 deactivate bản kia (nếu tồn tại) | Luôn dùng DTC | Đảm bảo không có 2 bản ghi cùng CMND cùng active. |
+
+**Ngoại lệ — `SP_DongTaiKhoan`** (thêm 07/2026, RF-B): SP có query `LINK1` để check `GD_GOIRUT`/`GD_CHUYENTIEN` bên đối tác, nhưng thao tác **write** chỉ là `DELETE FROM TaiKhoan` local (Merge Replication sẽ propagate xóa sang site kia). Do đó dùng `BEGIN TRANSACTION` local, không cần DTC. Xem [`13_All_Stored_Procedures.md`](13_All_Stored_Procedures.md) §12b.
 
 ### 6.3. Yêu cầu bắt buộc trong SP dùng DTC
 
@@ -219,7 +221,7 @@ EXEC sp_addmergearticle
 ### 7.4. Ghi chú thiết kế khóa phân tán khác
 
 - **`MANV`** — không dùng IDENTITY. App sinh với **prefix chi nhánh** (`BT001`, `TD001`) qua `sinhMANV()`. Đảm bảo toàn cục duy nhất kể cả khi chuyển NV giữa 2 CN.
-- **`SOTK`** — không dùng IDENTITY. App sinh với **prefix chi nhánh** (`BT0000001`, `TD0000001`) qua `sinhSOTK()`. Với TK cross‑branch (NV BT mở TK cho KH TD), prefix theo **chi nhánh NV** để trace nguồn gốc, còn `MACN = chi nhánh KH` để tuân thủ FK.
+- **`SOTK`** — không dùng IDENTITY. **SP tự sinh atomic** trong `sp_MoTaiKhoan` với prefix theo `@MACN` (chi nhánh sở hữu TK) và vòng WHILE retry khi PK duplicate (fix #3, 07/2026). Cross-branch: NV BT mở TK cho KH TD → SOTK có prefix `TD` (khớp `MACN=TANDINH`, không phải prefix theo NV). Route KHÔNG còn hàm `sinhSOTK()` — parse SOTK trả về từ output text của sqlcmd bằng regex.
 - **`CMND`** (KhachHang PK) — không sinh tự động; do người dùng nhập, đảm bảo toàn cục duy nhất bởi nghiệp vụ (mỗi công dân có 1 CMND).
 
 ---

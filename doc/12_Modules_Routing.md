@@ -24,29 +24,33 @@ Toàn bộ chức năng được tách theo module trong `APP_NGANHANG/routes/`.
 - **NganHang**: chỉ xem — gọi `querySP(req, 'TRACUU', 'sp_DanhSachNhanVien')` (SP đọc `NhanVien` qua LINK1+LINK2 vì TRACUU không có bảng này local).
 - **ChiNhanh**: toàn quyền CRUD + chuyển chi nhánh + phục hồi. Tất cả route ghi bọc `requireChiNhanh`.
 - **Sinh MANV mới**: prefix `BT` cho BENTHANH, `TD` cho TANDINH. Hàm `sinhMANV()` query `TOP 1 MANV LIKE 'BT%'` hoặc `LIKE 'TD%'` rồi tăng 1. Đảm bảo duy nhất toàn cục kể cả khi chuyển NV qua lại.
-- **Chuyển chi nhánh** (`/chuyen`): gọi `sp_ChuyenNhanVien` qua **`execSPAdmin` (sqlcmd)** vì SP dùng `BEGIN DISTRIBUTED TRANSACTION`.
-- **Phục hồi** (`/phuchoi`): gọi `SP_PhucHoiNhanVien` qua `execSPAdmin` — đưa `TrangThaiXoa = 0`.
+- **Chuyển chi nhánh** (`/chuyen`): gọi `sp_ChuyenNhanVien` qua **`execSPAdmin` (sqlcmd)** vì SP dùng `BEGIN DISTRIBUTED TRANSACTION`. SP hiện có **resurrect logic (RF-A)** — nếu chi nhánh đích đã có NV cùng CMND đang soft-delete, SP UPDATE ngược `TrangThaiXoa=0` giữ MANV cũ thay vì INSERT mới (tránh vi phạm `UQ_NhanVien_CMND`). SP trả cột `IsResurrect bit` để route hiển thị thông báo phù hợp.
+- **Phục hồi** (`/phuchoi`): gọi `SP_PhucHoiNhanVien` qua `execSPAdmin` — đưa `TrangThaiXoa = 0` local + deactivate bản active bên đối tác (LINK1) trong cùng DTC.
 
 ## 4. `taikhoan.js` — Mở / Đóng Tài Khoản
 
 - **NganHang**: chỉ xem danh sách toàn hệ thống qua SP `sp_DanhSachTaiKhoan` trên TRACUU (SP đọc `TaiKhoan` qua LINK1 — không UNION LINK2 vì TaiKhoan replicate full).
 - **ChiNhanh**: xem **tất cả TK** (do `TaiKhoan` replicate toàn vẹn giữa 2 chi nhánh) + mở TK + đóng TK. Danh sách KH để chọn ở form mở TK lấy từ 2 site bằng `queryAdminSQL` (dùng LINK1 để lấy KH bên đối tác) — có retry tự động khi pool lỗi.
 - Route `GET/POST /mo` và `POST /dong` bọc `requireChiNhanh`.
-- **Mở TK cross-branch**: form hiển thị KH của cả 2 chi nhánh (nhóm `<optgroup>`). Khi KH thuộc CN khác → `MACN = MACN của KH`, `SOTK` prefix theo **CN của NV thao tác** (dấu hiệu TK được mở cross-branch), INSERT chạy trên **server có KH** (via `execSPAdmin`) để thỏa `FK_TaiKhoan_KhachHang`.
-- Sinh `SOTK` tự động: `BT/TD` + 7 chữ số (`BT0000001`, `TD0000005`...).
+- **Mở TK cross-branch**: form hiển thị KH của cả 2 chi nhánh (nhóm `<optgroup>`). Khi KH thuộc CN khác → `MACN = MACN của KH`, INSERT chạy trên **server có KH** (via `execSPAdmin`) để thỏa `FK_TaiKhoan_KhachHang`.
+- **Sinh SOTK atomic trong SP** *(fix #3)*: từ tháng 07/2026, route KHÔNG còn hàm `sinhSOTK()` client-side. SP `sp_MoTaiKhoan` tự sinh SOTK trong distributed transaction với vòng WHILE retry (tối đa 5 lần) khi PK duplicate. Prefix `BT`/`TD` lấy theo `@MACN` (chi nhánh sở hữu TK) — cross-branch: NV BT mở TK cho KH TD → SOTK có prefix `TD` (không phải `BT`). Route parse SOTK trả về từ output text của sqlcmd bằng regex `/\b(?:BT|TD)\d{7}\b/`.
 - SP `sp_MoTaiKhoan` **luôn gọi qua `execSPAdmin` (sqlcmd)** — SP dùng `BEGIN DISTRIBUTED TRANSACTION` sau khi đã tách check KH (LINK1) ra trước (chi tiết: [Sự cố 5 trong `17_Su_Co_Va_Xu_Ly.md`](17_Su_Co_Va_Xu_Ly.md)).
+- **Đóng TK (RF‑B)** — logic guard đã chuyển từ route xuống SP `SP_DongTaiKhoan`. Route `POST /dong` chỉ còn 4 dòng: forward `SOTK + user.MANV` qua `execSPAdmin`. SP thực hiện 5 guard SQL-side: (1) TK tồn tại, (2) `SODU=0`, (3) `MACN_TK=MACN_NV` (chỉ đóng cùng CN), (4) không có `GD_GOIRUT` (local + LINK1), (5) không có `GD_CHUYENTIEN` (local + LINK1). Xem [Sự cố 8 trong `17_Su_Co_Va_Xu_Ly.md`](17_Su_Co_Va_Xu_Ly.md).
 
 ## 5. `giaodich.js` — Gửi / Rút / Chuyển Tiền
 
 - Form Gửi/Rút thiết kế **Tabs đa năng** trên cùng 1 trang.
 - Dropdown TK hiển thị **tất cả TK toàn hệ thống** kèm `[MACN]` để phân biệt chi nhánh — do TaiKhoan nhân bản toàn vẹn.
 - **SP chạy trên server của NV thao tác** (local) → `GD_GOIRUT`/`GD_CHUYENTIEN` ghi đúng vào mảnh của CN đó (phân mảnh theo MANV). Nếu TK ở CN khác → SP tự UPDATE qua LINK1.
-- Cả `sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien` đều gọi qua **`execSPAdmin` (sqlcmd)** — dùng `BEGIN DISTRIBUTED TRANSACTION` để đảm bảo ACID cross-branch (kể cả khi cùng CN, cấu trúc SP thống nhất một pattern).
+- Cả `sp_GuiTien`, `sp_RutTien`, `sp_ChuyenTien` đều gọi qua **`execSPAdmin` (sqlcmd)** vì có thể dùng DTC.
+- **Rẽ nhánh transaction** *(fix #6)*: SP hiện không luôn dùng DTC — chọn `BEGIN TRANSACTION` khi TK và NV cùng CN (local write), `BEGIN DISTRIBUTED TRANSACTION` khi khác CN (UPDATE qua LINK1). Giảm chi phí MSDTC cho ~70% giao dịch nội bộ CN.
+- **Chặn self-transfer** *(fix #9)*: `sp_ChuyenTien` RAISERROR ngay khi `@SOTK_CHUYEN = @SOTK_NHAN`.
 - `sp_RutTien` / `sp_ChuyenTien` dùng atomic check-and-update `WHERE SOTK=@SOTK AND SODU>=@SOTIEN` → không cần lock rời, không có race condition.
 
 ## 6. `baocao.js` — Thống Kê & Sao Kê
 
 - **Sao kê TK**: gọi `SP_SaoKeTaiKhoan` (chi nhánh) hoặc `sp_SaoKeToanBo` (TRACUU cho NganHang không chọn TK). Toàn bộ tính số dư đầu kỳ + số dư lũy kế xử lý dưới SQL Server bằng Window Function.
+- **Defense in depth cho role `KhachHang`** *(fix #8)*: `SP_SaoKeTaiKhoan` (cả bản chi nhánh + bản TRACUU) chứa guard `IS_ROLEMEMBER('KhachHang')` + `SUSER_SNAME()` — nếu login đang là KH và `CMND` chủ TK khác login name (login KH = CMND), SP RAISERROR. Chặn được kể cả khi KH đăng nhập trực tiếp SSMS bypass middleware Node.
 - **Liệt kê TK**:
   - NganHang → SP `sp_LietKeTaiKhoanTheoNgay` trên TRACUU (đọc `TaiKhoan` qua LINK1).
   - ChiNhanh → raw SELECT local + LEFT JOIN `KhachHang` local, `WHERE MACN = user.MACN`.
@@ -75,7 +79,19 @@ Toàn bộ chức năng được tách theo module trong `APP_NGANHANG/routes/`.
 ## Ghi Chú Về Xử Lý Xuyên Mảnh Ở Tầng Node
 
 Một số route điều phối xuyên mảnh **tại tầng Node** (thay vì bọc bằng SP + Linked Server):
-- `khachhang.js`, `quantri.js`: fan-out `CREATE LOGIN` sang BENTHANH + TANDINH + TRACUU khi tạo KH mới.
+- `khachhang.js`, `quantri.js`: fan-out `CREATE LOGIN` sang BENTHANH + TANDINH + TRACUU khi tạo KH mới. Login là object cấp Server nên buộc phải làm tay ở từng site — Replication không đồng bộ.
 - `baocao.js` (sao kê không chọn TK cho ChiNhanh): raw SELECT trên `GD_GOIRUT` + `GD_CHUYENTIEN` (không qua SP).
 
-Đây là lựa chọn có chủ đích để giảm số SP phải maintain — chấp nhận được vì các route này chỉ dùng bởi role có quyền đầy đủ tại DB (`ChiNhanh`/`NganHang`), không phải endpoint public. Đánh giá chi tiết ở [`18_DanhGia_CoChePhanTan.md`](18_DanhGia_CoChePhanTan.md).
+Đây là lựa chọn có chủ đích để giảm số SP phải maintain — chấp nhận được vì các route này chỉ dùng bởi role có quyền đầy đủ tại DB (`ChiNhanh`/`NganHang`), không phải endpoint public.
+
+## Ghi Chú Về Defense in Depth (07/2026)
+
+Đợt refactor tháng 07/2026 chuyển các guard nghiệp vụ từ tầng route xuống tầng SP để chống bypass ứng dụng:
+
+| Route (cũ) | SP tương ứng (mới) | Guard đã chuyển xuống SQL |
+|---|---|---|
+| `POST /taikhoan/dong` | `SP_DongTaiKhoan` | 5 lớp: TK tồn tại, SODU=0, same-branch, no `GD_GOIRUT`, no `GD_CHUYENTIEN` |
+| `POST /baocao/saoke` (route đã có pre-check) | `SP_SaoKeTaiKhoan` (cả 2 bản) | Ownership check `SUSER_SNAME() = CMND chủ TK` khi role KhachHang |
+| `POST /taikhoan/mo` (hàm `sinhSOTK` client) | `sp_MoTaiKhoan` | Atomic SOTK generation + retry-on-PK-conflict |
+
+Đánh giá chi tiết ở [`18_DanhGia_CoChePhanTan.md`](18_DanhGia_CoChePhanTan.md).

@@ -177,37 +177,42 @@ Kiểm tra sinh số tài khoản không trùng theo prefix chi nhánh.
 | 03a | NV BenThanh mở TK đầu tiên | SOTK = `BT0000001` |
 | 03b | NV BenThanh mở TK thứ 2 | SOTK = `BT0000002` |
 | 03c | NV TanDinh mở TK đầu tiên | SOTK = `TD0000001` |
-| 03d | NV BenThanh mở TK cho KH **TanDinh** | SOTK = `TD000000X`, MACN = TANDINH, INSERT chạy trên SQL2 (thỏa FK) → TK replicate sang SQL1 |
-| 03e | NV TanDinh mở TK cho KH **BenThanh** | SOTK = `BT000000X`, MACN = BENTHANH, INSERT chạy trên SQL1 (thỏa FK) → TK replicate sang SQL2 |
+| 03d | NV BenThanh mở TK cho KH **TanDinh** | SOTK = `TD000000X` (prefix theo `@MACN=TANDINH` — chi nhánh sở hữu TK), INSERT chạy trên SQL2 (thỏa FK) → TK replicate sang SQL1 |
+| 03e | NV TanDinh mở TK cho KH **BenThanh** | SOTK = `BT000000X` (prefix theo `@MACN=BENTHANH`), INSERT chạy trên SQL1 (thỏa FK) → TK replicate sang SQL2 |
 | 03f | Mở TK với SODU âm | Lỗi từ SP (constraint check) |
 | 03g | KhachHang cố mở TK | HTTP 403 — Không có quyền |
 | 03h | NganHang (admin) cố mở TK | HTTP 403 — Không có quyền (chỉ ChiNhanh được mở TK) |
+| 03i | 2 tab cùng lúc: BT001 mở TK KH X + BT001 mở TK KH Y (race) | Cả 2 thành công với SOTK khác nhau (fix #3 — SP retry-on-PK) |
 
 ### Hệ thống xử lý chi tiết
 
-**Bước 1 — Sinh SOTK (khi mở form)**
-- Code: [`routes/taikhoan.js:12–21`](../APP_NGANHANG/routes/taikhoan.js) (hàm `sinhSOTK`)
-- Logic: `SELECT TOP 1 SOTK FROM TaiKhoan WHERE SOTK LIKE 'BT%' ORDER BY SOTK DESC` → parse số cuối + 1 → pad 7 chữ số → `BT0000001`
-- Prefix: `BENTHANH` → `BT`, `TANDINH` → `TD` (map tại dòng 9: `MACN_PREFIX`)
-
-**Bước 2 — Kiểm tra quyền**
+**Bước 1 — Kiểm tra quyền**
 - Code: [`routes/taikhoan.js`](../APP_NGANHANG/routes/taikhoan.js) — middleware `requireChiNhanh`
 - `if (user.NHOM !== 'ChiNhanh')` → HTTP 403
 - Cả `KhachHang` lẫn `NganHang` đều bị chặn tại đây, không đến được SQL
 
-**Bước 3 — Xác định chi nhánh đích (cross-branch logic)**
-- Code: [`routes/taikhoan.js:100–128`](../APP_NGANHANG/routes/taikhoan.js)
+**Bước 2 — Xác định chi nhánh đích (cross-branch logic)**
+- Code: [`routes/taikhoan.js`](../APP_NGANHANG/routes/taikhoan.js)
 - Form gửi `KH_MACN` (chi nhánh của KH được chọn, lấy từ `data-macn` trên `<option>`)
 - So sánh `KH_MACN` vs `user.MACN`:
-  - **Cùng chi nhánh:** `MACN = user.MACN`, SOTK prefix theo user.MACN → gọi `execSPAdmin(userMacn, ...)` local
-  - **Khác chi nhánh (cross-branch):** `MACN = KH_MACN`, SOTK prefix theo chi nhánh NV → gọi `execSPAdmin(khMacn, ...)` trên server có KH
+  - **Cùng chi nhánh:** `MACN = user.MACN` → gọi `execSPAdmin(userMacn, 'sp_MoTaiKhoan', { CMND, SODU, MACN })`
+  - **Khác chi nhánh (cross-branch):** `MACN = KH_MACN` → gọi `execSPAdmin(khMacn, ...)` trên server có KH (để thỏa `FK_TaiKhoan_KhachHang`)
   - **Cả 2 case đều dùng `execSPAdmin` (sqlcmd)** vì SP dùng `BEGIN DISTRIBUTED TRANSACTION` → tedious không hỗ trợ MSDTC
 
-**Bước 4 — Gọi SP mở TK**
-- SP `sp_MoTaiKhoan`: kiểm tra SOTK chưa tồn tại, kiểm tra CMND tồn tại (check local trước → không có thì check `[LINK1]` đối tác — **TRƯỚC** `BEGIN DISTRIBUTED TRANSACTION` để tránh conflict với merge trigger), INSERT trong `BEGIN DISTRIBUTED TRANSACTION` riêng
-- Cross-branch: INSERT chạy trên server có KH → thỏa cả **FK_TaiKhoan_KhachHang** (CMND) lẫn **FK_TaiKhoan_ChiNhanh** (MACN)
-- TaiKhoan nhân bản toàn vẹn → Merge Replication tự đồng bộ sang server đối tác
-- Constraint `CHECK (SODU >= 0)` trong DB chặn số dư âm
+**Bước 3 — SP tự sinh SOTK atomic** *(fix #3, 07/2026)*
+- Trước đây route Node có hàm `sinhSOTK()` query `MAX(SOTK)+1` rồi truyền `@SOTK` vào SP → **race condition** khi 2 NV cùng lúc mở TK (cả 2 nhận cùng SOTK → PK violation).
+- Hiện tại SP `sp_MoTaiKhoan` **KHÔNG nhận tham số `@SOTK`** nữa. Nó tự sinh SOTK trong vòng WHILE retry tối đa 5 lần:
+  - Prefix `BT`/`TD` lấy theo `@MACN` (chi nhánh sở hữu TK — không phải chi nhánh NV thao tác).
+  - Mỗi lần đọc `MAX(SOTK) + 1 + @Attempt` rồi INSERT trong `BEGIN DISTRIBUTED TRANSACTION`.
+  - PK duplicate (`error 2627/2601`) → ROLLBACK, tăng `@Attempt`, thử SOTK khác.
+  - Thành công → `SELECT @SOTK` trả về app.
+- Route parse SOTK mới từ output text của `sqlcmd` bằng regex `/\b(?:BT|TD)\d{7}\b/`.
+
+**Bước 4 — SP hoàn tất INSERT**
+- SP `sp_MoTaiKhoan`: kiểm tra CMND tồn tại (check local trước → không có thì check `[LINK1]` đối tác — **TRƯỚC** `BEGIN DISTRIBUTED TRANSACTION` để tránh conflict với merge trigger), INSERT trong `BEGIN DISTRIBUTED TRANSACTION` riêng.
+- Cross-branch: INSERT chạy trên server có KH → thỏa cả **FK_TaiKhoan_KhachHang** (CMND) lẫn **FK_TaiKhoan_ChiNhanh** (MACN).
+- TaiKhoan nhân bản toàn vẹn → Merge Replication tự đồng bộ sang server đối tác.
+- Constraint `CHECK (SODU >= 0)` trong DB chặn số dư âm.
 
 **Cách kiểm tra trong DB:**
 ```sql
@@ -218,11 +223,9 @@ SELECT TOP 1 SOTK FROM TaiKhoan WHERE SOTK LIKE 'BT%' ORDER BY SOTK DESC;
 SELECT name, definition FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID('TaiKhoan');
 ```
 
-**Logic vấn đáp:** Prefix BT/TD đảm bảo **không bao giờ trùng SOTK** khi 2 site đồng thời INSERT (vì TaiKhoan nhân bản toàn vẹn). 
-TK mới được INSERT tại site sở hữu (MACN khớp), Replication tự đồng bộ sang site đối tác. 
-Đây là giải pháp tránh xung đột khóa chính trong CSDL phân tán.
+**Logic vấn đáp:** Prefix BT/TD (theo `@MACN` của TK — chi nhánh sở hữu) đảm bảo **không bao giờ trùng SOTK** giữa 2 site. TK mới được INSERT tại site sở hữu (MACN khớp), Replication tự đồng bộ sang site đối tác. **Race condition** giữa 2 NV cùng lúc mở TK đã được xử lý ở SP-side bằng vòng WHILE retry-on-PK (fix #3) — không cần lock giữa 2 request.
 
-**Cross-branch (03d, 03e):** KH đăng ký ở chi nhánh A, NV chi nhánh B mở TK cho KH đó → hệ thống tự route INSERT sang server A (nơi có KH) để thỏa FK. MACN và SOTK prefix theo chi nhánh KH (không phải chi nhánh NV). Dùng `execSPAdmin` (tài khoản HTKN) vì cần chạy SP trên server khác. Dropdown KH trong form hiển thị cả 2 chi nhánh (nhóm theo optgroup) với `data-macn` attribute để truyền chi nhánh KH về server.
+**Cross-branch (03d, 03e):** KH đăng ký ở chi nhánh A, NV chi nhánh B mở TK cho KH đó → hệ thống tự route INSERT sang server A (nơi có KH) để thỏa FK. MACN và SOTK prefix theo **chi nhánh KH** (nơi có bản ghi KH local, khớp `FK_TaiKhoan_KhachHang`). Dùng `execSPAdmin` (tài khoản HTKN) vì cần chạy SP trên server khác. Dropdown KH trong form hiển thị cả 2 chi nhánh (nhóm theo optgroup) với `data-macn` attribute để truyền chi nhánh KH về server.
 
 ---
 
@@ -235,10 +238,11 @@ Chuyển tiền khi cả 2 tài khoản đều nằm trên cùng 1 SQL Server.
 
 | ID | Input | Kết quả kỳ vọng |
 |----|-------|-----------------|
-| 04a | Chuyển BT0000001 → BT0000002, số tiền hợp lệ | Thành công, cả 2 SODU cập nhật |
+| 04a | Chuyển BT0000001 → BT0000002, số tiền hợp lệ | Thành công, cả 2 SODU cập nhật (dùng `BEGIN TRANSACTION` — local, không MSDTC) |
 | 04b | Chuyển BT0000001 → BT0000002, SOTIEN=0 | **Không thể nhập** — form tự xóa ô khi nhập `0`, nút Submit bị block bởi JS trước khi gửi request. SP không được gọi. |
 | 04c | Chuyển BT0000001 → BT0000002, SOTIEN > SODU | Lỗi: "Số dư không đủ" |
 | 04d | Chuyển BT0000001 → BT9999999 (không tồn tại) | Lỗi: "Tài khoản nhận không tồn tại" |
+| 04e | Chuyển BT0000001 → BT0000001 (self-transfer) | Lỗi: "Không thể chuyển tiền cho chính tài khoản này" (fix #9) |
 
 ### Hệ thống xử lý chi tiết
 
@@ -260,8 +264,11 @@ Chuyển tiền khi cả 2 tài khoản đều nằm trên cùng 1 SQL Server.
   - Khác nhau → `@IsNhanLocal = 0` → UPDATE qua LINK1
 
 **Bước 4 — Thực hiện giao dịch**
-- SP: [`07_SP_ChuyenTien.sql:49–77`](../sql/stored_procedures/07_SP_ChuyenTien.sql)
-- `BEGIN DISTRIBUTED TRANSACTION` (luôn dùng distributed dù nội bộ — do `SET XACT_ABORT ON`)
+- SP: [`07_SP_ChuyenTien.sql`](../sql/stored_procedures/07_SP_ChuyenTien.sql)
+- **Rẽ nhánh transaction** *(fix #6, 07/2026)*:
+  - Cùng CN (`@IsNhanLocal = 1`) → `BEGIN TRANSACTION` (local, không dùng MSDTC).
+  - Khác CN (`@IsNhanLocal = 0`) → `BEGIN DISTRIBUTED TRANSACTION` (MSDTC 2PC qua LINK1).
+- Chặn self-transfer (fix #9): `IF @SOTK_CHUYEN = @SOTK_NHAN` → RAISERROR ngay đầu SP.
 - Trừ tiền: `UPDATE TaiKhoan SET SODU -= @SOTIEN WHERE SOTK = @SOTK_CHUYEN AND SODU >= @SOTIEN`
 - Nếu `@@ROWCOUNT = 0` → ROLLBACK + RAISERROR "số dư không đủ"
 - Cộng tiền: `@IsNhanLocal = 1` → UPDATE local; `= 0` → UPDATE qua `[LINK1]`
@@ -347,21 +354,21 @@ SELECT SOTK, SODU FROM TaiKhoan WHERE SOTK = 'TD0000001';
 ### Hệ thống xử lý chi tiết
 
 **Gửi tiền:**
-- Code: [`routes/giaodich.js:31–44`](../APP_NGANHANG/routes/giaodich.js)
-- Gọi `execSP(req, server, 'sp_GuiTien', { SOTK, SOTIEN, MANV })`
+- Code: [`routes/giaodich.js`](../APP_NGANHANG/routes/giaodich.js)
+- Gọi `execSPAdmin(server, 'sp_GuiTien', { SOTK, SOTIEN, MANV })` (dùng sqlcmd vì có thể dùng DTC)
 - SP `sp_GuiTien`:
-  1. Validate `@SOTIEN > 0`
-  2. `UPDATE TaiKhoan SET SODU = SODU + @SOTIEN WHERE SOTK = @SOTK`
-  3. `INSERT INTO GD_GOIRUT(SOTK, SOTIEN, LOAIGD, NGAYGD, MANV) VALUES(@SOTK, @SOTIEN, 'GT', GETDATE(), @MANV)`
+  1. Validate `@SOTIEN >= 100000`
+  2. Đọc `MACN_TK` (từ `TaiKhoan` local — replicate full) và `MACN_NV` (từ `NhanVien` local — phân mảnh ngang)
+  3. **Rẽ nhánh transaction** *(fix #6)*:
+     - Cùng CN → `BEGIN TRANSACTION` + `UPDATE TaiKhoan SET SODU = SODU + @SOTIEN` local
+     - Khác CN → `BEGIN DISTRIBUTED TRANSACTION` + `UPDATE [LINK1].NGANHANG.dbo.TaiKhoan SET SODU = SODU + @SOTIEN`
+  4. `INSERT INTO GD_GOIRUT(...) VALUES(..., 'GT', ..., @MANV)` local (đúng mảnh theo NV)
+  5. `COMMIT`
 
 **Rút tiền:**
-- Code: [`routes/giaodich.js:47–62`](../APP_NGANHANG/routes/giaodich.js)
-- Gọi `execSP(req, server, 'sp_RutTien', { SOTK, SOTIEN, MANV })`
-- SP `sp_RutTien`:
-  1. Validate `@SOTIEN > 0`
-  2. `UPDATE TaiKhoan SET SODU = SODU - @SOTIEN WHERE SOTK = @SOTK AND SODU >= @SOTIEN`
-  3. `@@ROWCOUNT = 0` → RAISERROR "Số dư không đủ"
-  4. `INSERT INTO GD_GOIRUT(SOTK, SOTIEN, LOAIGD, NGAYGD, MANV) VALUES(@SOTK, @SOTIEN, 'RT', GETDATE(), @MANV)`
+- Code: [`routes/giaodich.js`](../APP_NGANHANG/routes/giaodich.js)
+- Gọi `execSPAdmin(server, 'sp_RutTien', { SOTK, SOTIEN, MANV })`
+- SP `sp_RutTien`: cấu trúc giống `sp_GuiTien` nhưng có atomic check số dư `WHERE SOTK=@SOTK AND SODU>=@SOTIEN` + `@@ROWCOUNT = 0` → RAISERROR "Số dư không đủ".
 
 **Cách kiểm tra trong DB:**
 ```sql
@@ -372,7 +379,7 @@ SELECT SOTK, SODU FROM TaiKhoan WHERE SOTK = 'BT0000001';
 SELECT * FROM GD_GOIRUT WHERE SOTK = 'BT0000001' ORDER BY NGAYGD DESC;
 ```
 
-**Logic vấn đáp:** Gửi/rút là giao dịch đơn giản nhất — chỉ thao tác trên 1 server (local). Điểm đáng chú ý: điều kiện `SODU >= @SOTIEN` trong WHERE của UPDATE rút tiền — đảm bảo atomic, không bao giờ số dư âm. SP dùng `TRY...CATCH` để bắt lỗi và trả thông báo rõ ràng.
+**Logic vấn đáp:** Gửi/rút có thể là local hoặc cross-branch (khi NV gửi/rút cho TK thuộc CN khác). SP tự nhận diện qua `MACN_TK vs MACN_NV` và **chọn tran phù hợp** — local tran khi cùng CN, DTC khi khác CN. Điểm đáng chú ý: điều kiện `SODU >= @SOTIEN` trong WHERE của UPDATE rút tiền — đảm bảo atomic, không bao giờ số dư âm. SP dùng `TRY...CATCH` để bắt lỗi và trả thông báo rõ ràng.
 
 ---
 
@@ -455,11 +462,13 @@ Nhân viên chuyển từ chi nhánh này sang chi nhánh khác: xóa mềm loca
 
 | ID | Input | Kết quả kỳ vọng |
 |----|-------|-----------------|
-| 08a | Chuyển NV `BT001` sang TANDINH | BT001 TrangThaiXoa=1, SQL2 có record mới `TD00X` |
+| 08a | Chuyển NV `BT001` sang TANDINH (chưa từng có ở TD) | BT001 TrangThaiXoa=1, SQL2 INSERT record mới `TD00X`, `IsResurrect=0` |
 | 08b | Chuyển NV không tồn tại | Lỗi: "Nhân viên không tồn tại" |
 | 08c | Chuyển NV sang chính chi nhánh hiện tại | Lỗi: "Chi nhánh mới phải khác hiện tại" |
 | 08d | Chuyển NV đã bị xóa trước đó | Lỗi: "Nhân viên này đã bị xóa" |
 | 08e | SQL2 sập trong lúc chuyển | ROLLBACK, BT001 không thay đổi |
+| 08f-RFA | Chuyển NV `BT004` (CMND=X) sang TANDINH, biết TANDINH đã có `TD003` cùng CMND với `TrangThaiXoa=1` (đã chuyển đi trước đó) | **Nhánh resurrect**: BT004 TrangThaiXoa=1, TD003 TrangThaiXoa=0 (giữ MANV cũ), SP trả `IsResurrect=1` — không tạo MANV mới, tránh vi phạm `UQ_NhanVien_CMND` |
+| 08g-RFA | Chuyển NV `BT004` (CMND=X) sang TANDINH, biết TANDINH đã có `TD003` cùng CMND đang active | Lỗi: "NV cùng CMND đang làm việc tại chi nhánh đích" (không được active 2 nơi) |
 
 ### Hệ thống xử lý chi tiết
 
@@ -473,20 +482,21 @@ Nhân viên chuyển từ chi nhánh này sang chi nhánh khác: xóa mềm loca
 - SP: [`sql/stored_procedures/08_SP_ChuyenNhanVien.sql:15–38`](../sql/stored_procedures/08_SP_ChuyenNhanVien.sql)
 - Kiểm tra NV tồn tại + `TrangThaiXoa = 0` + `MACN_MOI ≠ MACN_HIENTAI`
 
-**Bước 3 — Sinh MANV mới (BƯỚC 2 trong SP)**
-- SP: [`08_SP_ChuyenNhanVien.sql:45–71`](../sql/stored_procedures/08_SP_ChuyenNhanVien.sql)
-- Prefix theo MACN_MOI: `BENTHANH` → `BT`, `TANDINH` → `TD`
-- Query qua LINK1: `SELECT TOP 1 MANV FROM [LINK1]...NhanVien WHERE MANV LIKE 'TD%' ORDER BY MANV DESC`
-- Parse số + 1 → `TD004`
-- Vòng lặp `WHILE EXISTS(...)` tránh race condition
+**Bước 3 — Kiểm tra CMND tại chi nhánh đích (RF-A, 07/2026)**
+- SP: [`08_SP_ChuyenNhanVien.sql`](../sql/stored_procedures/08_SP_ChuyenNhanVien.sql)
+- Query `[LINK1].NGANHANG.dbo.NhanVien` lấy `EXIST_MANV, EXIST_TRANGTHAI` theo CMND của NV đang chuyển:
+  - `EXIST_MANV IS NOT NULL AND EXIST_TRANGTHAI = 0` → RAISERROR (NV cùng CMND đang active ở đích).
+  - `EXIST_MANV IS NOT NULL AND EXIST_TRANGTHAI = 1` → nhánh **RESURRECT**: `@IsResurrect=1`, `@MANV_MOI = @EXIST_MANV` (giữ MANV cũ).
+  - `EXIST_MANV IS NULL` → nhánh **INSERT_NEW**: sinh MANV mới với prefix chi nhánh đích + WHILE tránh trùng.
 
-**Bước 4 — Distributed Transaction (BƯỚC 3 trong SP)**
-- SP: [`08_SP_ChuyenNhanVien.sql:77–95`](../sql/stored_procedures/08_SP_ChuyenNhanVien.sql)
+**Bước 4 — Distributed Transaction**
 - `BEGIN DISTRIBUTED TRAN`
 - Local: `UPDATE NhanVien SET TrangThaiXoa = 1 WHERE MANV = @MANV`
-- Sang chi nhánh đích: `INSERT INTO [LINK1].NGANHANG.dbo.NhanVien(...) SELECT @MANV_MOI, CMND, HO, TEN, ...`
+- Tùy nhánh:
+  - **RESURRECT**: `UPDATE [LINK1].NGANHANG.dbo.NhanVien SET TrangThaiXoa = 0 WHERE MANV = @MANV_MOI`
+  - **INSERT_NEW**: `INSERT INTO [LINK1].NGANHANG.dbo.NhanVien(...) SELECT @MANV_MOI, CMND, HO, TEN, ..., @MACN_MOI, 0 FROM NhanVien WHERE MANV = @MANV`
 - `COMMIT TRAN` → MSDTC 2-phase commit
-- Trả về `MANV_MOI` cho Node.js hiển thị
+- Trả về `SELECT @MANV_MOI, @MACN_MOI, @IsResurrect` để route Node phân biệt kịch bản
 
 **Cách kiểm tra trong DB:**
 ```sql
@@ -583,46 +593,61 @@ REVERT;
 
 ---
 
-## TC-10: Đóng tài khoản — Kiểm tra điều kiện
+## TC-10: Đóng tài khoản — SP_DongTaiKhoan (RF-B, 07/2026)
 
 ### Tình huống test
 
 | ID | Điều kiện | Kết quả kỳ vọng |
 |----|-----------|-----------------|
-| 10a | SOTK hợp lệ, SODU=0, không có GD | Xóa thành công |
-| 10b | SOTK có SODU > 0 | Lỗi: "Không thể đóng TK có số dư khác 0" |
-| 10c | SOTK đã có GD lịch sử | Lỗi: "Không thể đóng TK đã có giao dịch" |
-| 10d | SOTK không tồn tại | Lỗi: "Tài khoản không tồn tại" |
+| 10a | SOTK hợp lệ, SODU=0, không có GD, cùng CN với NV | Xóa thành công |
+| 10b | SOTK có SODU > 0 | Lỗi: "Không thể đóng tài khoản có số dư khác 0" (G2) |
+| 10c-a | SOTK có `GD_GOIRUT` (local) | Lỗi: "Không thể đóng tài khoản đã có giao dịch gửi/rút" (G4) |
+| 10c-b | SOTK có `GD_GOIRUT` bên đối tác (LINK1 — GD do NV chi nhánh khác thực hiện) | Vẫn báo lỗi G4 vì SP đếm cả local + LINK1 |
+| 10c-c | SOTK có `GD_CHUYENTIEN` (local hoặc LINK1) | Lỗi: "Không thể đóng tài khoản đã có giao dịch chuyển tiền" (G5) |
+| 10d | SOTK không tồn tại | Lỗi: "Tài khoản không tồn tại" (G1) |
+| 10e | NV BT001 (BENTHANH) đóng TK `TD0000001` (thuộc TANDINH) | Lỗi: "Chỉ nhân viên tại chi nhánh sở hữu tài khoản mới có quyền đóng" (G3) |
 
 ### Hệ thống xử lý chi tiết
 
-**Bước 1 — Kiểm tra quyền (Node.js)**
-- Code: [`routes/taikhoan.js`](../APP_NGANHANG/routes/taikhoan.js) — middleware `requireChiNhanh`
-- Chỉ `ChiNhanh` được đóng TK — `NganHang` bị chặn HTTP 403
+**Bước 1 — Kiểm tra quyền (Node.js middleware)**
+- Middleware `requireChiNhanh` trong `routes/taikhoan.js`
+- `NganHang` và `KhachHang` bị chặn HTTP 403 trước khi tới route handler
 
-**Bước 2 — Kiểm tra SODU = 0**
-- Code: [`routes/taikhoan.js:116–122`](../APP_NGANHANG/routes/taikhoan.js)
-- `SELECT SODU FROM TaiKhoan WHERE RTRIM(SOTK) = @sotk`
-- Nếu `SODU !== 0` → redirect với lỗi
+**Bước 2 — Route forward call sang SP** *(RF-B, 07/2026)*
+- Trước đây route Node đảm nhận check SODU, check GD, rồi DELETE.
+- **Refactor**: chuyển toàn bộ 5 guard xuống SP mới `SP_DongTaiKhoan` để chống bypass ứng dụng.
+- Route giờ chỉ:
+  ```js
+  await execSPAdmin(server, 'SP_DongTaiKhoan', { SOTK, MANV: user.MANV });
+  ```
+- Dùng `execSPAdmin` (login `HTKN`) vì SP có query `LINK1` — user `ChiNhanh` thường không có quyền LINK1.
 
-**Bước 3 — Kiểm tra không có giao dịch**
-- Code: [`routes/taikhoan.js:125–133`](../APP_NGANHANG/routes/taikhoan.js)
-- `SELECT COUNT(*) FROM GD_GOIRUT WHERE SOTK = @sotk`
-- `SELECT COUNT(*) FROM GD_CHUYENTIEN WHERE SOTK_CHUYEN = @sotk OR SOTK_NHAN = @sotk`
-- Nếu có bất kỳ GD nào → lỗi "Không thể đóng TK đã có giao dịch"
+**Bước 3 — SP thực hiện 5 guard SQL-side**
+- SP: [`sql/stored_procedures/23_SP_DongTaiKhoan.sql`](../sql/stored_procedures/23_SP_DongTaiKhoan.sql)
 
-**Bước 4 — Xóa TK**
-- Code: [`routes/taikhoan.js:136`](../APP_NGANHANG/routes/taikhoan.js)
-- `DELETE FROM TaiKhoan WHERE RTRIM(SOTK) = @sotk`
+| # | Guard | Query |
+|---|---|---|
+| G1 | TK tồn tại | `SELECT MACN, SODU FROM TaiKhoan WHERE SOTK=@SOTK` — NULL → RAISERROR |
+| G2 | SODU=0 | `IF @SODU <> 0` → RAISERROR |
+| G3 | Cùng CN với NV | `SELECT MACN FROM NhanVien WHERE MANV=@MANV`; `IF @MACN_TK <> @MACN_NV` → RAISERROR |
+| G4 | Không có `GD_GOIRUT` | `COUNT(*) FROM GD_GOIRUT WHERE SOTK=@SOTK` + `COUNT(*) FROM [LINK1]...GD_GOIRUT WHERE SOTK=@SOTK` — `> 0` → RAISERROR |
+| G5 | Không có `GD_CHUYENTIEN` | Tương tự G4, check cả `SOTK_CHUYEN` và `SOTK_NHAN` ở local + LINK1 |
+
+**Bước 4 — DELETE local**
+- `BEGIN TRANSACTION` (local — không cần DTC, chỉ 1 write)
+- `DELETE FROM TaiKhoan WHERE SOTK = @SOTK`
+- `COMMIT` — Merge Replication tự propagate DELETE sang site đối tác
 
 **Cách kiểm tra trong DB:**
 ```sql
--- Kiểm tra TK có GD không:
-SELECT COUNT(*) FROM GD_GOIRUT WHERE SOTK = 'BT0000001';
-SELECT COUNT(*) FROM GD_CHUYENTIEN WHERE SOTK_CHUYEN = 'BT0000001' OR SOTK_NHAN = 'BT0000001';
+-- Trước khi test, xem TK có GD ở CN đối tác không:
+EXEC ('SELECT COUNT(*) FROM GD_GOIRUT WHERE SOTK=''BT0000001''') AT [LINK1];
+
+-- Chạy trực tiếp SP:
+EXEC SP_DongTaiKhoan @SOTK = N'BT0000001', @MANV = N'BT001';
 ```
 
-**Logic vấn đáp:** Đóng TK là thao tác DELETE thật (không xóa mềm) — chỉ được phép khi SODU = 0 VÀ không có lịch sử GD. Lý do: nếu có GD, xóa TK sẽ phá vỡ ràng buộc tham chiếu (FK) từ bảng GD_GOIRUT/GD_CHUYENTIEN. Logic kiểm tra nằm ở tầng Node.js (không dùng SP riêng) — 3 query tuần tự trước khi DELETE.
+**Logic vấn đáp:** Đóng TK là ví dụ điển hình của nguyên tắc **defense in depth**. Trước RF-B, guard nằm ở route Node → nếu ai đó bypass ứng dụng (SSMS trực tiếp, script khác chạy `DELETE FROM TaiKhoan`) → toàn bộ guard mất tác dụng, dữ liệu inconsistency. Sau RF-B, guard nằm ở tầng SP → dù ai gọi (route Node, script tự động, SP khác) đều đi qua 5 điều kiện này. Query `LINK1` để đếm GD ở đối tác đảm bảo TK từng có GD do NV chi nhánh khác thực hiện cũng không thể bị đóng nhầm.
 
 ---
 
@@ -726,15 +751,18 @@ Xác nhận 1 khách hàng (cùng CMND) có thể mở tài khoản ở cả 2 c
 | Câu hỏi | Trả lời ngắn | Xem code/SP |
 |---------|-------------|-------------|
 | Phân mảnh kiểu gì? | Phân mảnh ngang cho KH/NV/GD (theo MACN); **Nhân bản toàn vẹn** cho TaiKhoan và ChiNhanh | `07_Database_Schema.md` |
-| TaiKhoan nhân bản thì chuyển tiền xử lý thế nào? | SP đọc MACN local (nhanh), so sánh MACN → cùng CN ghi local, khác CN ghi qua LINK1 | `07_SP_ChuyenTien.sql:44–46` |
+| TaiKhoan nhân bản thì chuyển tiền xử lý thế nào? | SP đọc MACN local (nhanh), so sánh MACN → cùng CN ghi local (`BEGIN TRANSACTION`), khác CN ghi qua LINK1 (`BEGIN DISTRIBUTED TRANSACTION`) — fix #6 | `07_SP_ChuyenTien.sql` |
 | TRACUU chứa gì? | Chỉ replicate bảng KhachHang (1 article). GD/TK/NV lấy qua LINK1+LINK2 | `12_SP_DanhSachTaiKhoan.sql` |
 | Tái cấu trúc (reconstruction) ở đâu? | SQL3 (TRACUU) dùng SP + LINK1+LINK2 gộp dữ liệu từ 2 chi nhánh | `sp_DanhSachTaiKhoan`, `sp_DanhSachNhanVien` |
-| Giao dịch phân tán dùng gì? | MSDTC + `BEGIN DISTRIBUTED TRANSACTION` trong T-SQL | `07_SP_ChuyenTien.sql:49` |
-| Tại sao dùng sqlcmd thay tedious? | Driver tedious không hỗ trợ MSDTC; sqlcmd dùng Native Client hỗ trợ 2PC | `db.js` hàm `execSP` |
-| Đảm bảo không trùng SOTK? | Prefix theo chi nhánh (BT/TD) → không bao giờ giao nhau | `taikhoan.js:9` |
-| KhachHang xem dữ liệu thế nào? | Qua SP với filter CMND — không có SELECT trực tiếp | `14_SP_TaiKhoanKhachHang.sql` |
-| Nếu 1 node sập khi chuyển tiền? | MSDTC ROLLBACK toàn bộ (ACID đảm bảo) | `07_SP_ChuyenTien.sql:80–84` |
-| Window Function trong sao kê? | `SUM() OVER (ORDER BY NGAYGD ROWS UNBOUNDED PRECEDING)` = running balance | `06_SP_SaoKeTaiKhoan.sql:93–99` |
+| Khi nào cần DTC, khi nào chỉ local? | DTC chỉ khi có write cross-site thực sự. Cùng site → local tran, tiết kiệm chi phí MSDTC (fix #6). | `sp_ChuyenTien`, `sp_GuiTien`, `sp_RutTien` |
+| Tại sao dùng sqlcmd thay tedious? | Driver tedious không hỗ trợ MSDTC; sqlcmd dùng Native Client hỗ trợ 2PC | `db.js` hàm `execSPAdmin` |
+| Đảm bảo không trùng SOTK? | SP `sp_MoTaiKhoan` **tự sinh SOTK atomic** trong distributed tran, retry-on-PK khi duplicate. Prefix `BT/TD` theo `@MACN`. Loại bỏ race condition tầng app (fix #3). | `20_SP_MoTaiKhoan.sql` |
+| KhachHang xem dữ liệu thế nào? | Qua SP với filter CMND — không có SELECT trực tiếp. `SP_SaoKeTaiKhoan` còn check `SUSER_SNAME()` = CMND chủ TK (fix #8) chống bypass bằng SSMS. | `14_SP_TaiKhoanKhachHang.sql`, `06_SP_SaoKeTaiKhoan.sql` |
+| Nếu 1 node sập khi chuyển tiền? | MSDTC ROLLBACK toàn bộ (ACID đảm bảo) | `07_SP_ChuyenTien.sql` |
+| Window Function trong sao kê? | `SUM() OVER (ORDER BY NGAYGD ROWS UNBOUNDED PRECEDING)` = running balance | `06_SP_SaoKeTaiKhoan.sql` |
+| Đóng TK giữ guard ở đâu? | Ở SP `SP_DongTaiKhoan` — 5 lớp guard SQL-side (SODU, GD local + LINK1, same-branch), chống bypass ứng dụng (RF-B). | `23_SP_DongTaiKhoan.sql` |
+| Chuyển NV về CN cũ nơi từng làm — có bị lỗi UQ_CMND không? | Không — SP `sp_ChuyenNhanVien` tự phát hiện bản soft-delete cùng CMND ở đích và **resurrect** (UPDATE ngược `TrangThaiXoa=0`) thay vì INSERT vi phạm UQ (RF-A). | `08_SP_ChuyenNhanVien.sql` |
+| Chuyển tiền cho chính TK mình có được không? | Không — `sp_ChuyenTien` RAISERROR nếu `@SOTK_CHUYEN = @SOTK_NHAN` (fix #9). Guard đầu SP. | `07_SP_ChuyenTien.sql` |
 
 ---
 

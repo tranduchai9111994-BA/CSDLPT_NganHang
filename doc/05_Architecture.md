@@ -134,11 +134,11 @@ app.use('/quantri',   requireLogin, requireRole('NganHang'), qtRouter);
 |---|---|---|
 | Kết nối DB | 1 pool chung dùng tài khoản service | Pool riêng theo **từng SQL Login người dùng** (`db.js:getPool`) |
 | Xác thực | Bảng `users` trong DB, hash mật khẩu | **SQL Server Authentication trực tiếp** — Login/Password đúng chuẩn SQL Server |
-| Audit trail | App tự log bằng cột `created_by` | SQL Server tự log qua `LOGIN_NAME()` — chính xác đến từng người |
-| Distributed Transaction | Hiếm khi dùng | **6 SP dùng `BEGIN DISTRIBUTED TRAN`** qua `sqlcmd` để đi qua MSDTC |
+| Audit trail | App tự log bằng cột `created_by` | SQL Server tự log qua `SUSER_SNAME()` — chính xác đến từng người |
+| Distributed Transaction | Hiếm khi dùng | **6 SP có `BEGIN DISTRIBUTED TRAN`** (rẽ nhánh: local khi cùng CN, DTC khi khác CN) qua `sqlcmd` để đi qua MSDTC |
 | Multi‑server | Không | 4 instance, `db.js` chọn đúng server theo `session.SERVER` |
 | Report tính toán | Backend/frontend tính | **Tính tại SQL Server** bằng Window Function |
-| Phân quyền | 1 tầng (backend) | **3 tầng** (DB Role + Middleware + UI) |
+| Phân quyền | 1 tầng (backend) | **3 tầng** (DB Role + Middleware + UI) + defense-in-depth ở SP (`SP_DongTaiKhoan`, `SP_SaoKeTaiKhoan` check ownership) |
 
 ---
 
